@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
+import '../config/api_config.dart';
+
 /// Lightweight HTML renderer for notification body.
 /// Supports: <b>, <strong>, <i>, <em>, <br>, <p>, <h3>, <ul>/<ol>/<li>,
 ///           <img src>, <a href>, <hr>
@@ -131,7 +133,8 @@ class SimpleHtmlRenderer extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
         child: CachedNetworkImage(
-          imageUrl: url,
+          // Gambar dari penyimpanan lokal server berupa alamat relatif (/uploads/...); jadikan alamat lengkap.
+          imageUrl: ApiConfig.getImageUrl(url),
           maxHeightDiskCache: 500,
           fit: BoxFit.cover,
           width: double.infinity,

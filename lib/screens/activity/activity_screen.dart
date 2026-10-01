@@ -11,6 +11,8 @@ import '../../models/activity_model.dart';
 import '../../models/team_task_model.dart';
 import '../../config/api_config.dart';
 import '../../services/team_service.dart';
+import '../../widgets/motion.dart';
+import '../../widgets/ui_kit.dart';
 
 class ActivityScreen extends StatefulWidget {
   const ActivityScreen({super.key});
@@ -385,11 +387,11 @@ class _ActivityScreenState extends State<ActivityScreen> {
   String _formatActivityTypeLabel(String? value) {
     switch ((value ?? 'normal').toLowerCase()) {
       case 'before':
-        return 'Before';
+        return 'Sebelum shift';
       case 'after':
-        return 'After';
+        return 'Sesudah shift';
       default:
-        return 'Normal';
+        return 'Aktivitas biasa';
     }
   }
 
@@ -541,6 +543,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
     _endDate = now;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final activityProvider = Provider.of<ActivityProvider>(
         context,
         listen: false,
@@ -599,8 +602,17 @@ class _ActivityScreenState extends State<ActivityScreen> {
     final isResolvingCheckpointMode = !checkpointProvider.hasFetchedOnce;
     if (isResolvingCheckpointMode) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Aktivitas Harian')),
-        body: const Center(child: CircularProgressIndicator()),
+        appBar: AppBar(title: const Text('Aktivitas')),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: const [
+            SkeletonListCard(),
+            SizedBox(height: 12),
+            SkeletonListCard(),
+            SizedBox(height: 12),
+            SkeletonListCard(),
+          ],
+        ),
       );
     }
 
@@ -613,12 +625,13 @@ class _ActivityScreenState extends State<ActivityScreen> {
       appBar: AppBar(
         title: Text(
           effectiveViewMode == 'checkpoint'
-              ? 'Checkpoint Activity'
-              : 'Aktivitas Harian',
+              ? 'Aktivitas Checkpoint'
+              : 'Aktivitas',
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
+            tooltip: hasAssignedCheckpoint ? 'Isi checkpoint' : 'Tambah aktivitas',
             onPressed: () async {
               if (hasAssignedCheckpoint) {
                 await Provider.of<CheckpointProvider>(
@@ -637,70 +650,44 @@ class _ActivityScreenState extends State<ActivityScreen> {
       body: Column(
         children: [
           if (hasAssignedCheckpoint)
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.green[50],
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.green[100]!),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.check_circle_outline,
-                    size: 18,
-                    color: Colors.green,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Checkpoint aktif untuk Anda. Input Daily Activity manual disembunyikan.',
-                      style: TextStyle(fontSize: 12, color: Colors.green[800]),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          // Date Range Filter Card
-          Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue[200]!),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.calendar_today, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Rentang Tanggal',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${DateFormat('dd MMM yyyy', 'id_ID').format(_startDate)} - ${DateFormat('dd MMM yyyy', 'id_ID').format(_endDate)}',
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AtenimUi.brandSoft,
+                  borderRadius: BorderRadius.circular(AtenimUi.radiusControl),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline, size: 18, color: Colors.blue[800]),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Checkpoint aktif untuk Anda. Input aktivitas manual disembunyikan.',
                         style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          height: 1.35,
                           color: Colors.blue[900],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: Icon(Icons.edit, color: Colors.blue[700], size: 20),
-                  onPressed: () => _selectDateRange(context),
-                  tooltip: 'Ubah Rentang Tanggal',
-                ),
-              ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: DateRangeBar(
+              start: _startDate,
+              end: _endDate,
+              onRange: (start, end) => setState(() {
+                _startDate = start;
+                _endDate = end;
+                _currentPage = 1;
+              }),
+              onPickCustom: () => _selectDateRange(context),
             ),
           ),
           if (effectiveViewMode == 'checkpoint')
@@ -712,34 +699,29 @@ class _ActivityScreenState extends State<ActivityScreen> {
                 debugPrint(
                   '[ActivityScreen] Consumer rebuilding - isLoading: ${activityProvider.isLoading}, error: ${activityProvider.error}',
                 );
-                if (activityProvider.isLoading) {
-                  return const Center(child: CircularProgressIndicator());
+                // Data yang sudah tampil tidak diganti kerangka saat dimuat ulang.
+                if (activityProvider.isLoading &&
+                    activityProvider.recentActivities.isEmpty &&
+                    activityProvider.todayActivity == null) {
+                  return ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: const [
+                      SkeletonListCard(),
+                      SizedBox(height: 12),
+                      SkeletonListCard(),
+                      SizedBox(height: 12),
+                      SkeletonListCard(),
+                    ],
+                  );
                 }
 
                 if (activityProvider.error != null) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.error_outline,
-                          size: 64,
-                          color: Colors.red[300],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          activityProvider.error!,
-                          style: TextStyle(color: Colors.red[700]),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: () {
-                            activityProvider.loadActivities();
-                          },
-                          child: const Text('Coba Lagi'),
-                        ),
-                      ],
+                  return SingleChildScrollView(
+                    child: ErrorState(
+                      title: 'Aktivitas tidak bisa dimuat',
+                      message:
+                          'Periksa koneksi internet Anda, lalu coba lagi. Aktivitas yang belum terkirim tetap tersimpan di HP.',
+                      onRetry: () => activityProvider.loadActivities(),
                     ),
                   );
                 }
@@ -835,55 +817,42 @@ class _ActivityScreenState extends State<ActivityScreen> {
                 }
 
                 if (allFilteredActivities.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.assignment_outlined,
-                          size: 64,
-                          color: Colors.grey[400],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          effectiveViewMode == 'checkpoint'
-                              ? 'Belum ada data checkpoint'
-                              : 'Belum ada aktivitas',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                        const SizedBox(height: 24),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            if (effectiveViewMode == 'checkpoint') {
-                              await Provider.of<CheckpointProvider>(
-                                context,
-                                listen: false,
-                              ).loadCheckpoint(force: true);
-                            }
-                            final result = await Navigator.push<bool>(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => const ActivityFormScreen(),
-                              ),
-                            );
-                            if (result == true && mounted) {
-                              activityProvider.loadActivities();
-                              await Provider.of<CheckpointProvider>(
-                                context,
-                                listen: false,
-                              ).loadCheckpoint(force: true);
-                              if (!mounted) return;
-                              await _loadManualTasks(silent: true);
-                            }
-                          },
-                          icon: const Icon(Icons.add),
-                          label: Text(
-                            effectiveViewMode == 'checkpoint'
-                                ? 'Isi Checkpoint'
-                                : 'Tambah Aktivitas',
+                  return SingleChildScrollView(
+                    child: EmptyState(
+                      icon: Icons.assignment_outlined,
+                      title: effectiveViewMode == 'checkpoint'
+                          ? 'Belum ada data checkpoint'
+                          : 'Belum ada aktivitas',
+                      message: effectiveViewMode == 'checkpoint'
+                          ? 'Checkpoint yang Anda isi pada rentang tanggal ini akan tampil di sini. Coba perluas rentang tanggalnya.'
+                          : 'Aktivitas yang Anda catat pada rentang tanggal ini akan tampil di sini. Coba perluas rentang tanggalnya, atau catat aktivitas baru.',
+                      actionLabel: effectiveViewMode == 'checkpoint'
+                          ? 'Isi Checkpoint'
+                          : 'Tambah Aktivitas',
+                      onAction: () async {
+                        if (effectiveViewMode == 'checkpoint') {
+                          await Provider.of<CheckpointProvider>(
+                            context,
+                            listen: false,
+                          ).loadCheckpoint(force: true);
+                        }
+                        if (!context.mounted) return;
+                        final result = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const ActivityFormScreen(),
                           ),
-                        ),
-                      ],
+                        );
+                        if (result == true && mounted) {
+                          activityProvider.loadActivities();
+                          await Provider.of<CheckpointProvider>(
+                            context,
+                            listen: false,
+                          ).loadCheckpoint(force: true);
+                          if (!mounted) return;
+                          await _loadManualTasks(silent: true);
+                        }
+                      },
                     ),
                   );
                 }
@@ -917,10 +886,13 @@ class _ActivityScreenState extends State<ActivityScreen> {
                             padding: const EdgeInsets.all(16),
                             children: [
                               if (paginatedToday != null) ...[
-                                _buildActivityCard(
-                                  context,
-                                  paginatedToday,
-                                  isToday: true,
+                                FadeSlideIn(
+                                  key: ValueKey('act-${paginatedToday.id}'),
+                                  child: _buildActivityCard(
+                                    context,
+                                    paginatedToday,
+                                    isToday: true,
+                                  ),
                                 ),
                                 const SizedBox(height: 16),
                               ],
@@ -933,12 +905,18 @@ class _ActivityScreenState extends State<ActivityScreen> {
                                       ?.copyWith(fontWeight: FontWeight.bold),
                                 ),
                                 const SizedBox(height: 8),
-                                ...paginatedRecent.map(
-                                  (activity) => Padding(
+                                for (var i = 0; i < paginatedRecent.length; i++)
+                                  Padding(
                                     padding: const EdgeInsets.only(bottom: 8),
-                                    child: _buildActivityCard(context, activity),
+                                    child: FadeSlideIn(
+                                      key: ValueKey('act-${paginatedRecent[i].id}'),
+                                      delay: Motion.stagger(i + 1),
+                                      child: _buildActivityCard(
+                                        context,
+                                        paginatedRecent[i],
+                                      ),
+                                    ),
                                   ),
-                                ),
                               ],
                             ],
                           ),
@@ -1019,13 +997,19 @@ class _ActivityScreenState extends State<ActivityScreen> {
     final summaryText = _displaySummary(activity);
     final activityDate = _parseActivityDate(activity);
     final activityDateLabel = activityDate != null
-        ? DateFormat('dd MMMM yyyy').format(activityDate)
+        ? DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(activityDate)
         : (activity.date.isNotEmpty ? activity.date : 'Tanggal tidak tersedia');
     final activityTimeLabel = _formatActivityTime(activity);
     final isExpanded = _expandedActivityId == activity.id;
-    return Card(
-      color: isToday ? Colors.blue[50] : null,
-      child: ExpansionTile(
+    return AtenimCard(
+      padding: EdgeInsets.zero,
+      borderColor: isToday ? Colors.blue[100] : null,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        shape: const Border(),
+        collapsedShape: const Border(),
         key: ValueKey(
           'activity-${activity.id}-${isExpanded ? "open" : "closed"}',
         ),
@@ -1040,24 +1024,31 @@ class _ActivityScreenState extends State<ActivityScreen> {
           });
         },
         leading: Stack(
+          clipBehavior: Clip.none,
           children: [
-            CircleAvatar(
-              backgroundColor: Colors.blue.withOpacity(0.2),
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: AtenimUi.brandSoft,
+                borderRadius: BorderRadius.circular(AtenimUi.radiusControl),
+              ),
               child: Icon(
-                isCheckpoint ? Icons.checklist_rtl : Icons.assignment,
-                color: Colors.blue,
+                isCheckpoint ? Icons.checklist_rtl : Icons.assignment_outlined,
+                color: AtenimUi.brand,
+                size: 22,
               ),
             ),
-            // Read status indicator
+            // Titik hijau = sudah dilihat atasan (status nyata dari server).
             if (activity.isRead == true)
               Positioned(
-                right: 0,
-                top: 0,
+                right: -2,
+                top: -2,
                 child: Container(
                   width: 12,
                   height: 12,
                   decoration: BoxDecoration(
-                    color: Colors.green,
+                    color: Colors.green[600],
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2),
                   ),
@@ -1065,110 +1056,73 @@ class _ActivityScreenState extends State<ActivityScreen> {
               ),
           ],
         ),
-        title: Row(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      activityDateLabel,
-                    style: TextStyle(
-                      fontWeight: isToday ? FontWeight.bold : FontWeight.normal,
-                    ),
-                  ),
-                    if (activityTimeLabel != null)
-                      Text(
-                        activityTimeLabel,
-                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                      ),
-                    if (!isCheckpoint && !isTaskEvidence)
-                      Text(
-                        _formatActivityTypeLabel(activity.activityType),
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.blueGrey[700],
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    if (isLeaderManualTask)
-                      Container(
-                        margin: const EdgeInsets.only(top: 4),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.blue.shade100),
-                        ),
-                        child: Text(
-                          'Tugas manual dari leader',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.blue.shade700,
-                          ),
-                        ),
-                      ),
-                ],
+            Text(
+              isToday ? 'Hari ini' : activityDateLabel,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: isToday ? FontWeight.w800 : FontWeight.w700,
+                color: AtenimUi.ink,
               ),
             ),
-            if (activity.isLocal)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.orange[100],
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.schedule, size: 10, color: Colors.orange[800]),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Pending - Tunggu Koneksi',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange[800],
-                      ),
-                    ),
-                  ],
+            if (activityTimeLabel != null)
+              Text(
+                activityTimeLabel,
+                style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+              ),
+            // "Aktivitas biasa" tidak ditampilkan di kartu: hanya tipe khusus yang bermakna.
+            if (!isCheckpoint &&
+                !isTaskEvidence &&
+                const ['before', 'after'].contains(activity.activityType.toLowerCase()))
+              Text(
+                _formatActivityTypeLabel(activity.activityType),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blue[800],
                 ),
               ),
-            if (activity.isRead == true &&
-                activity.viewsCount != null &&
-                activity.viewsCount! > 0)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.green[100],
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+            if (isLeaderManualTask ||
+                activity.isLocal ||
+                (activity.isRead == true && (activity.viewsCount ?? 0) > 0))
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
                   children: [
-                    Icon(Icons.visibility, size: 12, color: Colors.green[800]),
-                    const SizedBox(width: 2),
-                    Text(
-                      '${activity.viewsCount}',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green[800],
+                    if (isLeaderManualTask)
+                      const StatusPill(
+                        label: 'Tugas manual dari leader',
+                        tone: Tone.info,
                       ),
-                    ),
+                    if (activity.isLocal)
+                      const StatusPill(
+                        label: 'Menunggu koneksi',
+                        tone: Tone.warning,
+                        icon: Icons.schedule,
+                      ),
+                    if (activity.isRead == true && (activity.viewsCount ?? 0) > 0)
+                      StatusPill(
+                        label: 'Dilihat ${activity.viewsCount}',
+                        tone: Tone.success,
+                        icon: Icons.visibility_outlined,
+                      ),
                   ],
                 ),
               ),
           ],
         ),
-        subtitle: Text(
-          summaryText,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            summaryText,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 14, color: AtenimUi.inkSoft, height: 1.35),
+          ),
         ),
         trailing: activity.isLocal || isCheckpoint || isTaskEvidence
             ? const SizedBox.shrink()
@@ -1301,6 +1255,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

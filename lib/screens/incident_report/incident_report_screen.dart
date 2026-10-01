@@ -3,7 +3,9 @@ import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../config/api_config.dart';
 import '../../services/incident_report_service.dart';
+import '../../widgets/motion.dart';
 import '../../widgets/photo_gallery_viewer.dart';
+import '../../widgets/ui_kit.dart';
 import 'incident_report_form_screen.dart';
 
 class IncidentReportScreen extends StatefulWidget {
@@ -18,16 +20,17 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   List<IncidentReportItem> _items = [];
   int _page = 1;
   int _totalPages = 1;
+  int _total = 0;
   bool _loading = true;
   bool _loadingMore = false;
   String? _error;
 
   Future<void> _load({bool refresh = false}) async {
+    if (!mounted) return;
     final pageToLoad = refresh ? 1 : (_page + 1);
     if (refresh) {
       setState(() {
-        _page = 1;
-        _loading = true;
+        _loading = _items.isEmpty; // data lama tetap tampil saat ditarik untuk dimuat ulang
         _error = null;
       });
     } else {
@@ -41,10 +44,11 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
           _items = result.data;
           _page = 1;
         } else {
-          _items.addAll(result.data);
+          _items = [..._items, ...result.data];
           _page = pageToLoad;
         }
         _totalPages = result.totalPages;
+        _total = result.total;
         _loading = false;
         _loadingMore = false;
         _error = null;
@@ -60,16 +64,14 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   }
 
   void _loadMore() {
-    if (_loadingMore || _page >= _totalPages || _items.isEmpty) return;
+    if (_loadingMore || _loading || _page >= _totalPages || _items.isEmpty) return;
     _load(refresh: false);
   }
 
   Future<void> _openForm() async {
     final saved = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => const IncidentReportFormScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const IncidentReportFormScreen()),
     );
     if (saved == true && mounted) _load(refresh: true);
   }
@@ -83,272 +85,239 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Laporan Kejadian'),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: _openForm,
-            tooltip: 'Buat laporan',
-          ),
-        ],
+      appBar: AppBar(title: const Text('Laporan Kejadian')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _openForm,
+        icon: const Icon(Icons.add),
+        label: const Text('Buat laporan'),
       ),
       body: RefreshIndicator(
         onRefresh: () => _load(refresh: true),
-        child: _buildBody(),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _openForm,
-        child: const Icon(Icons.add),
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n.metrics.pixels >= n.metrics.maxScrollExtent - 320) _loadMore();
+            return false;
+          },
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 96),
+            children: [FadeSwitcher(child: _buildBody())],
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildBody() {
     if (_loading && _items.isEmpty) {
-      return ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: 6,
-        itemBuilder: (_, i) => _buildSkeletonItem(),
+      return Column(
+        key: const ValueKey('memuat'),
+        children: const [
+          SkeletonListCard(),
+          SizedBox(height: 12),
+          SkeletonListCard(),
+          SizedBox(height: 12),
+          SkeletonListCard(),
+        ],
       );
     }
     if (_error != null && _items.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.error_outline, size: 48, color: Colors.grey[600]),
-              const SizedBox(height: 16),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: () => _load(refresh: true),
-                child: const Text('Coba lagi'),
-              ),
-            ],
+      return ErrorState(
+        key: const ValueKey('galat'),
+        title: 'Laporan tidak bisa dimuat',
+        message:
+            'Periksa koneksi internet Anda, lalu coba lagi. Laporan yang sudah Anda kirim tetap aman di server.',
+        onRetry: () => _load(refresh: true),
+      );
+    }
+    if (_items.isEmpty) {
+      return EmptyState(
+        key: const ValueKey('kosong'),
+        icon: Icons.assignment_outlined,
+        title: 'Belum ada laporan kejadian',
+        message:
+            'Catat kejadian di lokasi kerja beserta foto buktinya. Laporan Anda akan tampil di sini dan bisa dibaca atasan.',
+        actionLabel: 'Buat laporan pertama',
+        onAction: _openForm,
+      );
+    }
+
+    final widgets = <Widget>[];
+    String? currentMonth;
+    var animIndex = 0;
+    for (final item in _items) {
+      final date = DateTime.tryParse(item.reportDate);
+      final month = date != null
+          ? DateFormat('MMMM yyyy', 'id_ID').format(date)
+          : 'Tanggal tidak diketahui';
+      if (month != currentMonth) {
+        currentMonth = month;
+        widgets.add(SectionHeader(title: month));
+      }
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: FadeSlideIn(
+            key: ValueKey('laporan-${item.id}'),
+            delay: Motion.stagger(animIndex++),
+            child: _ReportCard(item: item),
           ),
         ),
       );
     }
-    if (_items.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.assignment_outlined, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text('Belum ada laporan', style: TextStyle(color: Colors.grey[600])),
-            const SizedBox(height: 16),
-            FilledButton.icon(
-              onPressed: _openForm,
-              icon: const Icon(Icons.add),
-              label: const Text('Buat laporan pertama'),
-            ),
-          ],
+
+    return Column(
+      key: const ValueKey('isi'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+          child: Text(
+            _total > _items.length
+                ? 'Menampilkan ${_items.length} dari $_total laporan'
+                : '$_total laporan',
+            style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
+          ),
         ),
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: _items.length + (_loadingMore || (_page < _totalPages && _items.isNotEmpty) ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index == _items.length) {
-          if (_loadingMore) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          _loadMore();
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: 16),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return _buildListItem(_items[index]);
-      },
+        ...widgets,
+        if (_loadingMore)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          ),
+        if (_error != null && !_loadingMore)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Center(
+              child: TextButton.icon(
+                onPressed: _loadMore,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Gagal memuat laporan berikutnya. Coba lagi'),
+              ),
+            ),
+          ),
+      ],
     );
   }
+}
 
-  Widget _buildSkeletonItem() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 16,
-              width: 120,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              height: 14,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              height: 14,
-              width: 200,
-              decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: List.generate(
-                3,
-                (_) => Container(
-                  height: 48,
-                  width: 48,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+/// Satu laporan. Deskripsi panjang dipotong 3 baris dan bisa dibuka dengan mengetuk kartu.
+class _ReportCard extends StatefulWidget {
+  const _ReportCard({required this.item});
+
+  final IncidentReportItem item;
+
+  @override
+  State<_ReportCard> createState() => _ReportCardState();
+}
+
+class _ReportCardState extends State<_ReportCard> {
+  bool _expanded = false;
+
+  bool get _isLong {
+    final text = widget.item.description;
+    return text.length > 120 || '\n'.allMatches(text).length >= 3;
   }
 
-  String _formatCreatedAt(String? iso) {
-    if (iso == null || iso.isEmpty) return '-';
+  String _createdLabel(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
     final dt = DateTime.tryParse(iso)?.toLocal();
-    if (dt == null) return iso;
-    return DateFormat('dd/MM/yyyy HH:mm').format(dt);
+    if (dt == null) return '';
+    return 'Dibuat ${DateFormat('d MMM yyyy, HH:mm', 'id_ID').format(dt)}';
   }
 
-  String _formatReportDate(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return '-';
-    final parts = dateStr.split('-');
-    if (parts.length == 3) {
-      final dt = DateTime.tryParse(dateStr);
-      if (dt != null) return DateFormat('EEEE, d MMM yyyy', 'id_ID').format(dt);
-    }
-    return dateStr;
-  }
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final date = DateTime.tryParse(item.reportDate);
+    final created = _createdLabel(item.createdAt);
 
-  Widget _buildListItem(IncidentReportItem item) {
-    final photoCount = item.photoUrls.length;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      elevation: 1,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Baris: Tanggal kejadian + waktu dibuat
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Tanggal kejadian',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _formatReportDate(item.reportDate),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+    return AtenimCard(
+      padding: const EdgeInsets.all(14),
+      onTap: _isLong ? () => setState(() => _expanded = !_expanded) : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              DateTile(date: date),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Dibuat',
+                      date != null
+                          ? DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(date)
+                          : item.reportDate,
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AtenimUi.ink,
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _formatCreatedAt(item.createdAt),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[700],
+                    if (created.isNotEmpty)
+                      Text(
+                        created,
+                        style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
                       ),
-                    ),
                   ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Deskripsi
-            Text(
-              'Deskripsi',
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
+            ],
+          ),
+          const SizedBox(height: 12),
+          AnimatedSize(
+            duration: Motion.reduced(context) ? Duration.zero : Motion.quick,
+            curve: Motion.easeOut,
+            alignment: Alignment.topCenter,
+            child: Text(
               item.description,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.grey[800], fontSize: 14, height: 1.4),
+              maxLines: _expanded ? null : 3,
+              overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 14, color: Colors.grey[800], height: 1.45),
             ),
-            if (item.photoUrls.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Icon(Icons.photo_library, size: 16, color: Colors.grey[600]),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${photoCount} foto',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+          ),
+          if (_isLong) ...[
+            const SizedBox(height: 6),
+            Text(
+              _expanded ? 'Ringkas' : 'Selengkapnya',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AtenimUi.brand,
               ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 72,
-                child: ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: item.photoUrls.length,
-                  itemBuilder: (_, i) {
-                    final url = ApiConfig.getImageUrl(item.photoUrls[i]);
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8),
+            ),
+          ],
+          if (item.photoUrls.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              '${item.photoUrls.length} foto',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AtenimUi.inkSoft,
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 72,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: item.photoUrls.length,
+                itemBuilder: (_, i) {
+                  final url = ApiConfig.getImageUrl(item.photoUrls[i]);
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Semantics(
+                      button: true,
+                      label: 'Buka foto ${i + 1} dari ${item.photoUrls.length}',
                       child: GestureDetector(
                         onTap: () {
                           Navigator.of(context).push(
@@ -362,30 +331,31 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                           );
                         },
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(10),
                           child: CachedNetworkImage(
                             imageUrl: url,
                             width: 72,
                             height: 72,
                             fit: BoxFit.cover,
-                            placeholder: (_, __) => Container(
-                              color: Colors.grey[200],
-                              child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                            ),
-                            errorWidget: (_, __, ___) => Container(
-                              color: Colors.grey[200],
-                              child: const Icon(Icons.broken_image),
+                            fadeInDuration: const Duration(milliseconds: 180),
+                            placeholder: (context, url) =>
+                                Container(width: 72, height: 72, color: Colors.grey[200]),
+                            errorWidget: (context, url, error) => Container(
+                              width: 72,
+                              height: 72,
+                              color: Colors.grey[100],
+                              child: Icon(Icons.broken_image_outlined, color: Colors.grey[600]),
                             ),
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

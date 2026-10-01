@@ -9,7 +9,9 @@ import '../../providers/auth_provider.dart';
 import 'team_tasks_screen.dart';
 import 'leader_checkpoint_tasks_screen.dart';
 import '../../services/team_service.dart';
+import '../../widgets/motion.dart';
 import '../../widgets/shimmer_loading.dart';
+import '../../widgets/ui_kit.dart';
 
 class TeamScreen extends StatefulWidget {
   const TeamScreen({super.key});
@@ -252,14 +254,14 @@ class _TeamScreenState extends State<TeamScreen> {
           flex: 2,
           child: Text(
             label,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
           ),
         ),
         Expanded(
           flex: 3,
           child: Text(
             value.isNotEmpty ? value : '-',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+            style: TextStyle(fontWeight: FontWeight.w600, color: AtenimUi.ink),
           ),
         ),
       ],
@@ -510,11 +512,7 @@ class _TeamScreenState extends State<TeamScreen> {
     final currentUserId = user?.id;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Team'),
-        backgroundColor: const Color(0xFF1E88E5),
-        foregroundColor: Colors.white,
-      ),
+      appBar: AppBar(title: const Text('Team')),
       body: RefreshIndicator(
         onRefresh: _loadTeamData,
         child: ListView(
@@ -571,6 +569,7 @@ class _TeamScreenState extends State<TeamScreen> {
                     ],
                   ),
                 ),
+              if (!_isLeader) const SizedBox(height: 12),
               if (!_isLeader)
                 _buildSectionCard(
                   title: 'Tugas Team',
@@ -601,26 +600,27 @@ class _TeamScreenState extends State<TeamScreen> {
 
   Widget _buildLeaderSummary() {
     final totalMembers = _totalMembersFromBackend();
-    return Row(
-      children: [
-        Expanded(
-          child: _buildKpiCard(
-            label: 'Team Dipimpin',
-            value: _leaderTeams.length.toString(),
-            color: Colors.blue,
-            icon: Icons.groups,
+    return FadeSlideIn(
+      key: const ValueKey('team-kpi'),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildKpiCard(
+              label: 'Team dipimpin',
+              value: _leaderTeams.length.toString(),
+              icon: Icons.groups_outlined,
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildKpiCard(
-            label: 'Total Anggota',
-            value: totalMembers.toString(),
-            color: Colors.green,
-            icon: Icons.people,
+          const SizedBox(width: 12),
+          Expanded(
+            child: _buildKpiCard(
+              label: 'Total anggota',
+              value: totalMembers.toString(),
+              icon: Icons.people_outline,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -899,14 +899,16 @@ class _TeamScreenState extends State<TeamScreen> {
       return _buildSectionCard(
         title: 'Susunan Team',
         child: Text(
-          'Belum ada team yang terhubung dengan akun Anda',
-          style: TextStyle(color: Colors.grey.shade600),
+          'Akun Anda belum tergabung di team mana pun. Hubungi leader atau admin untuk ditambahkan.',
+          style: TextStyle(color: AtenimUi.inkSoft, height: 1.4),
         ),
       );
     }
 
     final team = _currentTeam();
-    final leaderName = team?.leaderName ?? 'Tanpa Leader';
+    final leaderName = (team?.leaderName ?? '').isNotEmpty
+        ? team!.leaderName
+        : 'Tanpa leader';
     final filtered = _filterMembers(_members);
     final totalPages = _totalPages(filtered.length);
     final effectivePage = totalPages > 0
@@ -914,68 +916,49 @@ class _TeamScreenState extends State<TeamScreen> {
         : 0;
     final pageItems = _paginateList(filtered, effectivePage);
 
-    final leaderRow = <String, String>{
-      'name': leaderName,
-      'title': 'Leader',
-      'role': 'Leader',
-      'id': '',
-    };
     return _buildSectionCard(
       title: 'Susunan Team',
       child: Column(
         children: [
-          _buildTableHeader(),
-          const SizedBox(height: 8),
-          _buildTableRow(
-            name: leaderRow['name'] ?? '-',
-            title: leaderRow['title'] ?? '-',
-            role: leaderRow['role'] ?? '-',
-          ),
+          _buildPersonRow(name: leaderName, subtitle: 'Leader team', isLeader: true),
           if (filtered.isEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 12),
               child: Text(
-                'Tidak ada anggota sesuai pencarian',
-                style: TextStyle(color: Colors.grey.shade600),
+                'Tidak ada anggota yang cocok dengan pencarian.',
+                style: TextStyle(color: AtenimUi.inkSoft),
               ),
             )
           else
             ...pageItems.map((member) {
               final isMe = member.id.isNotEmpty && member.id == currentUserId;
-              return _buildTableRow(
+              return _buildPersonRow(
                 name: member.name,
-                title: member.title ?? member.positionName ?? 'Anggota',
-                role: 'Anggota',
-                highlight: isMe,
+                subtitle: member.title ?? member.positionName ?? 'Anggota',
+                isMe: isMe,
               );
-            }).toList(),
+            }),
           if (filtered.isNotEmpty && totalPages > 1) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 TextButton(
                   onPressed: effectivePage > 0
-                      ? () {
-                          setState(() {
-                            _memberPage = effectivePage - 1;
-                          });
-                        }
+                      ? () => setState(() => _memberPage = effectivePage - 1)
                       : null,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
                   child: const Text('Sebelumnya'),
                 ),
                 Text(
-                  'Hal ${effectivePage + 1} / $totalPages',
-                  style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+                  'Halaman ${effectivePage + 1} dari $totalPages',
+                  style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
                 ),
                 TextButton(
                   onPressed: effectivePage + 1 < totalPages
-                      ? () {
-                          setState(() {
-                            _memberPage = effectivePage + 1;
-                          });
-                        }
+                      ? () => setState(() => _memberPage = effectivePage + 1)
                       : null,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
                   child: const Text('Berikutnya'),
                 ),
               ],
@@ -986,57 +969,64 @@ class _TeamScreenState extends State<TeamScreen> {
     );
   }
 
-  Widget _buildTableHeader() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: const Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Text('Nama', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          Expanded(
-            flex: 3,
-            child: Text(
-              'Jabatan',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text('Role', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTableRow({
+  Widget _buildPersonRow({
     required String name,
-    required String title,
-    required String role,
-    bool highlight = false,
+    required String subtitle,
+    bool isLeader = false,
+    bool isMe = false,
   }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: highlight ? Colors.grey.shade50 : Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: highlight ? Colors.grey.shade400 : Colors.grey.shade200,
-        ),
-      ),
+    final initials = name.trim().isEmpty
+        ? '?'
+        : name
+              .trim()
+              .split(RegExp(r'\s+'))
+              .map((part) => part[0])
+              .take(2)
+              .join()
+              .toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
-          Expanded(flex: 3, child: Text(name)),
-          Expanded(flex: 3, child: Text(title)),
-          Expanded(flex: 2, child: Text(role)),
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: isLeader ? AtenimUi.brandSoft : Colors.grey[100],
+            child: Text(
+              initials,
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: isLeader ? Colors.blue[800] : Colors.grey[800],
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: AtenimUi.ink,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
+                ),
+              ],
+            ),
+          ),
+          if (isLeader)
+            const StatusPill(label: 'Leader', tone: Tone.info)
+          else if (isMe)
+            const StatusPill(label: 'Anda', tone: Tone.success),
         ],
       ),
     );
@@ -1201,7 +1191,7 @@ class _TeamScreenState extends State<TeamScreen> {
         ),
         if (_manageError != null) ...[
           const SizedBox(height: 12),
-          _buildErrorCard(message: _manageError),
+          _buildErrorCard(message: _manageError, onRetry: _loadManageData),
         ],
       ],
     );
@@ -1843,14 +1833,12 @@ class _TeamScreenState extends State<TeamScreen> {
   }
 
   Widget _buildMemberCard(TeamMember member, {String? currentUserId}) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+    final isMe = member.id.isNotEmpty && member.id == currentUserId;
+    final subtitle = [member.title, member.siteName]
+        .where((item) => (item ?? '').isNotEmpty)
+        .join(' · ');
+    return AtenimCard(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
       child: Row(
         children: [
           _buildMemberAvatar(member),
@@ -1859,34 +1847,44 @@ class _TeamScreenState extends State<TeamScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  member.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        member.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: AtenimUi.ink,
+                        ),
+                      ),
+                    ),
+                    if (isMe) ...[
+                      const SizedBox(width: 8),
+                      const StatusPill(label: 'Anda', tone: Tone.success),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  [
-                    member.title,
-                    member.siteName,
-                  ].where((item) => (item ?? '').isNotEmpty).join(' - '),
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                ),
-                if (member.externalId != null &&
-                    member.externalId!.isNotEmpty &&
-                    member.id == currentUserId) ...[
-                  const SizedBox(height: 2),
+                if (subtitle.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
+                    ),
+                  ),
+                if (isMe && (member.externalId ?? '').isNotEmpty)
                   Text(
                     'NIK: ${member.externalId}',
-                    style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                    style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
                   ),
-                ],
-                if (member.teamName != null) ...[
-                  const SizedBox(height: 2),
+                if ((member.teamName ?? '').isNotEmpty)
                   Text(
-                    member.teamName ?? '-',
-                    style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+                    member.teamName!,
+                    style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
                   ),
-                ],
               ],
             ),
           ),
@@ -1937,98 +1935,46 @@ class _TeamScreenState extends State<TeamScreen> {
     );
   }
 
-  Widget _buildErrorCard({String? message}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.red.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.red.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            message ?? _error ?? 'Gagal memuat data team',
-            style: TextStyle(color: Colors.red.shade700),
-          ),
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _loadTeamData,
-            child: const Text('Coba Lagi'),
-          ),
-        ],
-      ),
+  Widget _buildErrorCard({String? message, VoidCallback? onRetry}) {
+    return ErrorState(
+      title: 'Data team tidak bisa dimuat',
+      message: message ?? 'Periksa koneksi internet Anda, lalu coba lagi.',
+      onRetry: onRetry ?? _loadTeamData,
     );
   }
 
   Widget _buildSkeletonScreen() {
-    return Column(
+    return const Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildSkeletonCard(height: 90),
-        const SizedBox(height: 12),
-        _buildSkeletonCard(height: 140),
-        const SizedBox(height: 12),
-        _buildSkeletonCard(height: 220),
+        SkeletonListCard(),
+        SizedBox(height: 12),
+        SkeletonListCard(),
+        SizedBox(height: 12),
+        SkeletonListCard(),
       ],
     );
   }
 
-  Widget _buildSkeletonCard({double height = 120}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ShimmerLoading(
-            width: 160,
-            height: 16,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          const SizedBox(height: 12),
-          ShimmerLoading(
-            width: double.infinity,
-            height: height,
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSectionCard({required String title, required Widget child}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          child,
-        ],
+    return FadeSlideIn(
+      key: ValueKey('team-card-$title'),
+      child: AtenimCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: AtenimUi.ink,
+              ),
+            ),
+            const SizedBox(height: 12),
+            child,
+          ],
+        ),
       ),
     );
   }
@@ -2036,33 +1982,43 @@ class _TeamScreenState extends State<TeamScreen> {
   Widget _buildKpiCard({
     required String label,
     required String value,
-    required Color color,
     required IconData icon,
   }) {
-    return Container(
+    return AtenimCard(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Icon(icon, color: color),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: color,
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AtenimUi.brandSoft,
+              borderRadius: BorderRadius.circular(AtenimUi.radiusControl),
             ),
+            child: Icon(icon, color: AtenimUi.brand, size: 22),
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(fontSize: 11, color: color.withOpacity(0.9)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    height: 1.1,
+                    color: AtenimUi.ink,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+                ),
+              ],
+            ),
           ),
         ],
       ),

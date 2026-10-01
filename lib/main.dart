@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -15,6 +16,7 @@ import 'providers/request_provider.dart';
 import 'providers/connectivity_provider.dart';
 import 'providers/developer_options_provider.dart';
 import 'providers/checkpoint_provider.dart';
+import 'providers/patrol_provider.dart';
 import 'widgets/developer_options_warning_dialog.dart';
 import 'services/background_tracking_service.dart';
 import 'services/push_notification_service.dart';
@@ -30,6 +32,7 @@ import 'screens/payroll/payroll_slips_screen.dart';
 import 'services/api_service.dart';
 import 'services/persistent_notification_service.dart';
 import 'widgets/update_dialog.dart';
+import 'widgets/ui_kit.dart';
 import 'models/version_model.dart';
 import 'services/error_reporting_service.dart';
 import 'services/global_update_checker.dart';
@@ -123,6 +126,7 @@ class _MyAppState extends State<MyApp> {
         ChangeNotifierProvider(create: (_) => RequestProvider()),
         ChangeNotifierProvider(create: (_) => DeveloperOptionsProvider()),
         ChangeNotifierProvider(create: (_) => CheckpointProvider()),
+        ChangeNotifierProvider(create: (_) => PatrolProvider()),
       ],
       child: AppLifecycleHandler(
         child: MaterialApp(
@@ -141,6 +145,28 @@ class _MyAppState extends State<MyApp> {
           theme: ThemeData(
             colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
             useMaterial3: true,
+            // Latar halaman dan bilah atas seragam (DESIGN.md): abu sangat terang, tanpa tint dan bayangan.
+            scaffoldBackgroundColor: AtenimUi.pageBg,
+            appBarTheme: AppBarTheme(
+              backgroundColor: AtenimUi.pageBg,
+              foregroundColor: AtenimUi.ink,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              centerTitle: false,
+              titleTextStyle: TextStyle(
+                color: AtenimUi.ink,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            // Pindah layar: memudar sambil maju sedikit, lebih halus dari zoom bawaan Android.
+            pageTransitionsTheme: const PageTransitionsTheme(
+              builders: {
+                TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+                TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+              },
+            ),
           ),
           home: const DeveloperOptionsWrapper(child: AuthWrapper()),
           routes: {

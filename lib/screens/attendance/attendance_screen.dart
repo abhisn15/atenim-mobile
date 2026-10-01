@@ -4,6 +4,9 @@ import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../providers/attendance_provider.dart';
 import '../../models/attendance_model.dart';
+import '../../utils/clock.dart';
+import '../../widgets/motion.dart';
+import '../../widgets/ui_kit.dart';
 
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key});
@@ -29,20 +32,27 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   @override
   void initState() {
     super.initState();
-    // Set default ke bulan ini
-    final now = DateTime.now();
-    _startDate = DateTime(now.year, now.month, 1);
-    _endDate = now;
-    
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AttendanceProvider>(context, listen: false).loadAttendance(
-        startDate: _startDate,
-        endDate: _endDate,
-      );
+      if (!mounted) return;
+      _reload();
     });
   }
 
-  Future<void> _selectDateRange(BuildContext context) async {
+  Future<void> _reload() {
+    return Provider.of<AttendanceProvider>(context, listen: false)
+        .loadAttendance(startDate: _startDate, endDate: _endDate);
+  }
+
+  void _setRange(DateTime start, DateTime end) {
+    if (start == _startDate && end == _endDate) return;
+    setState(() {
+      _startDate = start;
+      _endDate = end;
+    });
+    _reload();
+  }
+
+  Future<void> _selectDateRange() async {
     final DateTimeRange? picked = await showDateRangePicker(
       context: context,
       firstDate: DateTime(2020),
@@ -56,7 +66,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return Theme(
           data: Theme.of(context).copyWith(
             colorScheme: ColorScheme.light(
-              primary: Theme.of(context).primaryColor,
+              primary: AtenimUi.brand,
               onPrimary: Colors.white,
               surface: Colors.white,
               onSurface: Colors.black87,
@@ -66,386 +76,117 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         );
       },
     );
-
-    if (picked != null && picked != DateTimeRange(start: _startDate, end: _endDate)) {
-      setState(() {
-        _startDate = picked.start;
-        _endDate = picked.end;
-      });
-      
-      // Reload attendance dengan date range baru
-      Provider.of<AttendanceProvider>(context, listen: false).loadAttendance(
-        startDate: _startDate,
-        endDate: _endDate,
-      );
-    }
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'present':
-        return Colors.green;
-      case 'late':
-        return Colors.orange;
-      case 'absent':
-        return Colors.red;
-      case 'leave':
-        return Colors.blue;
-      case 'sick':
-        return Colors.purple;
-      case 'remote':
-        return Colors.teal;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  IconData _getStatusIcon(String status) {
-    switch (status.toLowerCase()) {
-      case 'present':
-        return Icons.check_circle;
-      case 'late':
-        return Icons.access_time;
-      case 'absent':
-        return Icons.cancel;
-      case 'leave':
-        return Icons.beach_access;
-      case 'sick':
-        return Icons.medical_services;
-      case 'remote':
-        return Icons.home;
-      default:
-        return Icons.help;
-    }
+    if (picked != null) _setRange(picked.start, picked.end);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Riwayat Kehadiran'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.date_range),
-            onPressed: () => _selectDateRange(context),
-            tooltip: 'Pilih Rentang Tanggal',
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Date Range Filter Card
-          Container(
-            margin: const EdgeInsets.all(16),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue[200]!),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.calendar_today, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Rentang Tanggal',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${DateFormat('dd MMM yyyy', 'id_ID').format(_startDate)} - ${DateFormat('dd MMM yyyy', 'id_ID').format(_endDate)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.blue[900],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(Icons.edit, color: Colors.blue[700], size: 20),
-                  onPressed: () => _selectDateRange(context),
-                  tooltip: 'Ubah Rentang Tanggal',
-                ),
-              ],
-            ),
-          ),
-          // Attendance List
-          Expanded(
-            child: Consumer<AttendanceProvider>(
-              builder: (context, attendanceProvider, _) {
-          if (attendanceProvider.isLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          if (attendanceProvider.error != null) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-                  const SizedBox(height: 16),
-                  Text(
-                    attendanceProvider.error!,
-                    style: TextStyle(color: Colors.red[700]),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                  onPressed: () {
-                    attendanceProvider.loadAttendance(
-                      startDate: _startDate,
-                      endDate: _endDate,
-                    );
-                  },
-                    child: const Text('Coba Lagi'),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          final recent = attendanceProvider.recentAttendance;
-          final today = attendanceProvider.todayAttendance;
-
-          // Filter: jika today ada di recent, jangan tampilkan duplikat
-          final filteredRecent = recent.where((record) {
-            if (today != null && record.id == today.id) {
-              return false; // Skip today dari recent list
-            }
-            return true;
-          }).toList();
-
-          if (filteredRecent.isEmpty && today == null) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.calendar_today_outlined, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Belum ada riwayat kehadiran',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            );
-          }
-
+      appBar: AppBar(title: const Text('Absensi')),
+      body: Consumer<AttendanceProvider>(
+        builder: (context, provider, _) {
           return RefreshIndicator(
-            onRefresh: () => attendanceProvider.loadAttendance(
-              startDate: _startDate,
-              endDate: _endDate,
-            ),
+            onRefresh: _reload,
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
               children: [
-                if (today != null) ...[
-                  Card(
-                    color: Colors.blue[50],
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                _getStatusIcon(today.status),
-                                color: _getStatusColor(today.status),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Hari Ini',
-                                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          _buildAttendanceRow('Tanggal', DateFormat('dd MMMM yyyy').format(DateTime.parse(today.date))),
-                          if (today.checkIn != null) ...[
-                            _buildAttendanceRow('Check-In', today.checkIn!),
-                            if (_getCheckInPhotoUrl(today) != null)
-                              _buildPhotoThumbnail('Foto Check-In', _getCheckInPhotoUrl(today)!),
-                          ],
-                          if (today.checkOut != null) ...[
-                            _buildAttendanceRow('Check-Out', today.checkOut!),
-                            if (_getCheckOutPhotoUrl(today) != null)
-                              _buildPhotoThumbnail('Foto Check-Out', _getCheckOutPhotoUrl(today)!),
-                          ],
-                          const SizedBox(height: 8),
-                          Chip(
-                            label: Text(today.status.toUpperCase()),
-                            backgroundColor: _getStatusColor(today.status).withOpacity(0.2),
-                            labelStyle: TextStyle(
-                              color: _getStatusColor(today.status),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (filteredRecent.isNotEmpty) ...[
-                  Text(
-                    'Riwayat',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                  ),
-                  const SizedBox(height: 8),
-                  ...filteredRecent.map((record) => Card(
-                        margin: const EdgeInsets.only(bottom: 8),
-                        child: ExpansionTile(
-                          leading: CircleAvatar(
-                            backgroundColor: _getStatusColor(record.status).withOpacity(0.2),
-                            child: Icon(
-                              _getStatusIcon(record.status),
-                              color: _getStatusColor(record.status),
-                            ),
-                          ),
-                          title: Text(
-                            DateFormat('dd MMMM yyyy').format(DateTime.parse(record.date)),
-                          ),
-                          subtitle: Text(
-                            '${record.checkIn ?? '-'} - ${record.checkOut ?? '-'}',
-                          ),
-                          trailing: Chip(
-                            label: Text(record.status.toUpperCase()),
-                            backgroundColor: _getStatusColor(record.status).withOpacity(0.2),
-                            labelStyle: TextStyle(
-                              color: _getStatusColor(record.status),
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (record.checkIn != null) ...[
-                                    _buildAttendanceRow('Check-In', record.checkIn!),
-                                    if (_getCheckInPhotoUrl(record) != null)
-                                      _buildPhotoThumbnail('Foto Check-In', _getCheckInPhotoUrl(record)!),
-                                    const SizedBox(height: 8),
-                                  ],
-                                  if (record.checkOut != null) ...[
-                                    _buildAttendanceRow('Check-Out', record.checkOut!),
-                                    if (_getCheckOutPhotoUrl(record) != null)
-                                      _buildPhotoThumbnail('Foto Check-Out', _getCheckOutPhotoUrl(record)!),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      )),
-                ],
+                DateRangeBar(
+                  start: _startDate,
+                  end: _endDate,
+                  onRange: _setRange,
+                  onPickCustom: _selectDateRange,
+                ),
+                const SizedBox(height: 16),
+                FadeSwitcher(child: _buildBody(provider)),
               ],
             ),
           );
-              },
-            ),
-          ),
-        ],
+        },
       ),
     );
   }
 
-  Widget _buildAttendanceRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+  Widget _buildBody(AttendanceProvider provider) {
+    final today = provider.todayAttendance;
+    final history = provider.recentAttendance
+        .where((record) => today == null || record.id != today.id)
+        .toList();
+    final hasData = today != null || history.isNotEmpty;
+
+    // Data yang sudah tampil tidak diganti kerangka saat dimuat ulang (tarik untuk segarkan).
+    if (provider.isLoading && !hasData) {
+      return Column(
+        key: const ValueKey('memuat'),
+        children: const [
+          SkeletonListCard(),
+          SizedBox(height: 12),
+          SkeletonListCard(),
+          SizedBox(height: 12),
+          SkeletonListCard(),
+        ],
+      );
+    }
+
+    if (provider.error != null && !hasData) {
+      return ErrorState(
+        key: const ValueKey('galat'),
+        title: 'Riwayat absensi tidak bisa dimuat',
+        message:
+            'Periksa koneksi internet Anda, lalu coba lagi. Absen yang sudah Anda lakukan tetap tersimpan.',
+        onRetry: _reload,
+      );
+    }
+
+    if (!hasData) {
+      return EmptyState(
+        key: const ValueKey('kosong'),
+        icon: Icons.event_busy_outlined,
+        title: 'Belum ada catatan absensi',
+        message:
+            'Tidak ada catatan absen pada rentang tanggal ini. Perluas rentangnya untuk melihat riwayat sebelumnya.',
+        actionLabel: '30 hari terakhir',
+        onAction: () {
+          final now = DateTime.now();
+          final end = DateTime(now.year, now.month, now.day);
+          _setRange(end.subtract(const Duration(days: 29)), end);
+        },
+      );
+    }
+
+    final all = <AttendanceRecord>[if (today != null) today, ...history];
+    return Column(
+      key: const ValueKey('isi'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FadeSlideIn(child: _SummaryCard(records: all)),
+        if (today != null) ...[
+          const SizedBox(height: 12),
+          FadeSlideIn(
+            delay: Motion.stagger(1),
+            child: _TodayCard(
+              record: today,
+              onPhoto: _showPhotoDialog,
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  String? _getCheckInPhotoUrl(AttendanceRecord record) {
-    // Prioritize checkInPhotoUrl, fallback to photoUrl if checkOut is null
-    return record.checkInPhotoUrl ?? 
-           (record.checkIn != null && record.checkOut == null ? record.photoUrl : null);
-  }
-
-  String? _getCheckOutPhotoUrl(AttendanceRecord record) {
-    // Prioritize checkOutPhotoUrl, fallback to photoUrl if checkOut exists
-    return record.checkOutPhotoUrl ?? 
-           (record.checkOut != null ? record.photoUrl : null);
-  }
-
-  Widget _buildPhotoThumbnail(String label, String photoUrl) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.grey[700],
-              fontWeight: FontWeight.w500,
-              fontSize: 12,
-            ),
-          ),
+        if (history.isNotEmpty) ...[
           const SizedBox(height: 8),
-          GestureDetector(
-            onTap: () => _showPhotoDialog(photoUrl, label),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: CachedNetworkImage(
-                imageUrl: photoUrl,
-                width: double.infinity,
-                height: 200,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => Container(
-                  height: 200,
-                  color: Colors.grey[200],
-                  child: const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                ),
-                errorWidget: (context, url, error) => Container(
-                  height: 200,
-                  color: Colors.grey[200],
-                  child: const Icon(Icons.error, color: Colors.red),
+          const SectionHeader(title: 'Riwayat'),
+          for (var i = 0; i < history.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: FadeSlideIn(
+                key: ValueKey('riwayat-${history[i].id}'),
+                delay: Motion.stagger(i + 2),
+                child: _HistoryTile(
+                  record: history[i],
+                  onPhoto: _showPhotoDialog,
                 ),
               ),
             ),
-          ),
         ],
-      ),
+      ],
     );
   }
 
@@ -460,12 +201,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               child: CachedNetworkImage(
                 imageUrl: photoUrl,
                 fit: BoxFit.contain,
-                placeholder: (context, url) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                placeholder: (context, url) =>
+                    const Center(child: CircularProgressIndicator()),
                 errorWidget: (context, url, error) => const Icon(
-                  Icons.error,
-                  color: Colors.red,
+                  Icons.broken_image_outlined,
+                  color: Colors.white,
                   size: 48,
                 ),
               ),
@@ -475,9 +215,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               right: 8,
               child: IconButton(
                 icon: const Icon(Icons.close, color: Colors.white),
+                tooltip: 'Tutup',
                 onPressed: () => Navigator.of(context).pop(),
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.black54,
+                  minimumSize: const Size(48, 48),
                 ),
               ),
             ),
@@ -505,3 +247,493 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 }
 
+String? _checkInPhotoUrl(AttendanceRecord record) {
+  // Utamakan foto check-in; foto lama (photoUrl) hanya dipakai bila belum check-out.
+  return record.checkInPhotoUrl ??
+      (record.checkIn != null && record.checkOut == null
+          ? record.photoUrl
+          : null);
+}
+
+String? _checkOutPhotoUrl(AttendanceRecord record) {
+  return record.checkOutPhotoUrl ??
+      (record.checkOut != null ? record.photoUrl : null);
+}
+
+typedef _PhotoOpener = void Function(String url, String title);
+
+/// Ringkasan periode: hitungan per status dari catatan yang dimuat, dan rata-rata lama kerja
+/// hanya dari hari yang punya jam masuk dan pulang. Tidak ada angka karangan.
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({required this.records});
+
+  final List<AttendanceRecord> records;
+
+  @override
+  Widget build(BuildContext context) {
+    int count(bool Function(String s) test) =>
+        records.where((r) => test(r.status.toLowerCase())).length;
+
+    final onTime = count((s) => s == 'present' || s == 'remote');
+    final late = count((s) => s == 'late');
+    final absent = count((s) => s == 'absent');
+    final leave = count((s) => s == 'leave' || s == 'sick');
+
+    final worked = records
+        .map((r) => workedMinutes(r.checkIn, r.checkOut))
+        .whereType<int>()
+        .toList();
+    final avgWorked = worked.isEmpty
+        ? null
+        : (worked.reduce((a, b) => a + b) / worked.length).round();
+
+    return AtenimCard(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Ringkasan periode ini',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AtenimUi.ink,
+            ),
+          ),
+          const SizedBox(height: 12),
+          IntrinsicHeight(
+            child: Row(
+              children: [
+                _SummaryCell(value: onTime, label: 'Hadir', tone: Tone.success),
+                const _CellDivider(),
+                _SummaryCell(value: late, label: 'Terlambat', tone: Tone.warning),
+                const _CellDivider(),
+                _SummaryCell(value: absent, label: 'Tidak hadir', tone: Tone.danger),
+                const _CellDivider(),
+                _SummaryCell(value: leave, label: 'Izin/Sakit', tone: Tone.info),
+              ],
+            ),
+          ),
+          if (avgWorked != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Rata-rata lama kerja ${formatDuration(avgWorked)} per hari (dari ${worked.length} hari yang lengkap).',
+              style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft, height: 1.35),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _CellDivider extends StatelessWidget {
+  const _CellDivider();
+
+  @override
+  Widget build(BuildContext context) =>
+      VerticalDivider(width: 1, thickness: 1, color: AtenimUi.line);
+}
+
+class _SummaryCell extends StatelessWidget {
+  const _SummaryCell({required this.value, required this.label, required this.tone});
+
+  final int value;
+  final String label;
+  final Tone tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = toneColors(tone);
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+              color: value == 0 ? Colors.grey[600] : colors.fg,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TodayCard extends StatelessWidget {
+  const _TodayCard({required this.record, required this.onPhoto});
+
+  final AttendanceRecord record;
+  final _PhotoOpener onPhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    final inLabel = clockLabel(record.checkIn);
+    final outLabel = clockLabel(record.checkOut);
+    final date = DateTime.tryParse(record.date);
+
+    String durationLabel = '-';
+    String durationCaption = 'Durasi';
+    final done = workedMinutes(record.checkIn, record.checkOut);
+    if (done != null) {
+      durationLabel = formatDuration(done);
+    } else if (inLabel != null && record.checkOut == null) {
+      final now = DateTime.now();
+      var running = (now.hour * 60 + now.minute) - clockMinutes(record.checkIn)!;
+      if (running < 0) running += 24 * 60;
+      durationLabel = formatDuration(running);
+      durationCaption = 'Berjalan';
+    }
+
+    final notes = <Widget>[
+      if (record.needsValidation)
+        const StatusPill(
+          label: 'Menunggu validasi',
+          tone: Tone.warning,
+          icon: Icons.hourglass_top,
+        ),
+      if (record.isAutoCheckout)
+        const StatusPill(label: 'Pulang otomatis', tone: Tone.neutral),
+      if (record.breakDurationMinutes != null && record.breakDurationMinutes! > 0)
+        StatusPill(
+          label: 'Istirahat ${formatDuration(record.breakDurationMinutes!)}',
+          tone: Tone.info,
+        ),
+      if ((record.breakOverByMinutes ?? 0) > 0)
+        StatusPill(
+          label: 'Lebih ${record.breakOverByMinutes} menit',
+          tone: Tone.warning,
+        ),
+    ];
+
+    final inPhoto = _checkInPhotoUrl(record);
+    final outPhoto = _checkOutPhotoUrl(record);
+
+    return AtenimCard(
+      borderColor: Colors.blue[100],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Hari ini',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AtenimUi.ink,
+                  ),
+                ),
+              ),
+              StatusPill(
+                label: attendanceStatusLabel(record.status),
+                tone: attendanceStatusTone(record.status),
+              ),
+            ],
+          ),
+          if (date != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(date),
+              style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(flex: 3, child: _TimeBlock(caption: 'Masuk', value: inLabel ?? '-')),
+              Expanded(
+                flex: 3,
+                child: _TimeBlock(
+                  caption: 'Pulang',
+                  value: outLabel ?? (inLabel != null ? 'Belum' : '-'),
+                ),
+              ),
+              Expanded(flex: 5, child: _TimeBlock(caption: durationCaption, value: durationLabel)),
+            ],
+          ),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(spacing: 8, runSpacing: 8, children: notes),
+          ],
+          if (inPhoto != null || outPhoto != null) ...[
+            const SizedBox(height: 14),
+            _PhotoPair(
+              checkInUrl: inPhoto,
+              checkOutUrl: outPhoto,
+              onPhoto: onPhoto,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TimeBlock extends StatelessWidget {
+  const _TimeBlock({required this.caption, required this.value});
+
+  final String caption;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(caption, style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft)),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w700,
+            height: 1.2,
+            color: AtenimUi.ink,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PhotoPair extends StatelessWidget {
+  const _PhotoPair({this.checkInUrl, this.checkOutUrl, required this.onPhoto});
+
+  final String? checkInUrl;
+  final String? checkOutUrl;
+  final _PhotoOpener onPhoto;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget thumb(String? url, String label) {
+      if (url == null) return const SizedBox.shrink();
+      return Expanded(
+        child: Semantics(
+          button: true,
+          label: 'Buka $label',
+          child: GestureDetector(
+            onTap: () => onPhoto(url, label),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AtenimUi.radiusControl),
+                  child: AspectRatio(
+                    aspectRatio: 4 / 3,
+                    child: CachedNetworkImage(
+                      imageUrl: url,
+                      fit: BoxFit.cover,
+                      fadeInDuration: const Duration(milliseconds: 180),
+                      placeholder: (context, url) =>
+                          Container(color: Colors.grey[200]),
+                      errorWidget: (context, url, error) => Container(
+                        color: Colors.grey[100],
+                        alignment: Alignment.center,
+                        child: Icon(Icons.broken_image_outlined, color: Colors.grey[600]),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(label, style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    final hasBoth = checkInUrl != null && checkOutUrl != null;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        thumb(checkInUrl, 'Foto masuk'),
+        if (hasBoth) const SizedBox(width: 10),
+        thumb(checkOutUrl, 'Foto pulang'),
+        // Satu foto saja tidak melebar penuh.
+        if (!hasBoth) const Spacer(),
+      ],
+    );
+  }
+}
+
+/// Satu hari di riwayat: tanggal, jam, lama kerja, status. Ketuk untuk membuka rincian dan foto.
+class _HistoryTile extends StatefulWidget {
+  const _HistoryTile({required this.record, required this.onPhoto});
+
+  final AttendanceRecord record;
+  final _PhotoOpener onPhoto;
+
+  @override
+  State<_HistoryTile> createState() => _HistoryTileState();
+}
+
+class _HistoryTileState extends State<_HistoryTile> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final record = widget.record;
+    final date = DateTime.tryParse(record.date);
+    final inLabel = clockLabel(record.checkIn);
+    final outLabel = clockLabel(record.checkOut);
+    final worked = workedMinutes(record.checkIn, record.checkOut);
+    final inPhoto = _checkInPhotoUrl(record);
+    final outPhoto = _checkOutPhotoUrl(record);
+    final hasDetail = inLabel != null ||
+        outLabel != null ||
+        inPhoto != null ||
+        outPhoto != null ||
+        (record.notes ?? '').trim().isNotEmpty;
+
+    final timeText = (inLabel == null && outLabel == null)
+        ? 'Tidak ada jam tercatat'
+        : '${inLabel ?? '-'} - ${outLabel ?? '-'}';
+
+    return AtenimCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: hasDetail ? () => setState(() => _open = !_open) : null,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  DateTile(date: date),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          date != null
+                              ? DateFormat('EEEE', 'id_ID').format(date)
+                              : record.date,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AtenimUi.ink,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          timeText,
+                          style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft, height: 1.3),
+                        ),
+                        if (worked != null)
+                          Text(
+                            'Lama kerja ${formatDuration(worked)}',
+                            style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft, height: 1.3),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  StatusPill(
+                    label: attendanceStatusLabel(record.status),
+                    tone: attendanceStatusTone(record.status),
+                  ),
+                  if (hasDetail) ...[
+                    const SizedBox(width: 4),
+                    AnimatedRotation(
+                      turns: _open ? 0.5 : 0,
+                      duration: Motion.reduced(context) ? Duration.zero : Motion.quick,
+                      curve: Motion.easeOut,
+                      child: Icon(Icons.expand_more, color: Colors.grey[700]),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: Motion.reduced(context) ? Duration.zero : Motion.quick,
+            curve: Motion.easeOut,
+            alignment: Alignment.topCenter,
+            child: _open
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Divider(height: 1, color: AtenimUi.line),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(flex: 3, child: _TimeBlock(caption: 'Masuk', value: inLabel ?? '-')),
+                            Expanded(flex: 3, child: _TimeBlock(caption: 'Pulang', value: outLabel ?? '-')),
+                            Expanded(
+                              flex: 5,
+                              child: _TimeBlock(
+                                caption: 'Durasi',
+                                value: worked != null ? formatDuration(worked) : '-',
+                              ),
+                            ),
+                          ],
+                        ),
+                        if ((record.breakDurationMinutes ?? 0) > 0 ||
+                            record.needsValidation ||
+                            record.isAutoCheckout) ...[
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              if (record.needsValidation)
+                                const StatusPill(
+                                  label: 'Menunggu validasi',
+                                  tone: Tone.warning,
+                                  icon: Icons.hourglass_top,
+                                ),
+                              if (record.isAutoCheckout)
+                                const StatusPill(label: 'Pulang otomatis', tone: Tone.neutral),
+                              if ((record.breakDurationMinutes ?? 0) > 0)
+                                StatusPill(
+                                  label: 'Istirahat ${formatDuration(record.breakDurationMinutes!)}',
+                                  tone: Tone.info,
+                                ),
+                            ],
+                          ),
+                        ],
+                        if ((record.notes ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Text(
+                            record.notes!.trim(),
+                            style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft, height: 1.35),
+                          ),
+                        ],
+                        if (inPhoto != null || outPhoto != null) ...[
+                          const SizedBox(height: 12),
+                          _PhotoPair(
+                            checkInUrl: inPhoto,
+                            checkOutUrl: outPhoto,
+                            onPhoto: widget.onPhoto,
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                : const SizedBox(width: double.infinity),
+          ),
+        ],
+      ),
+    );
+  }
+}

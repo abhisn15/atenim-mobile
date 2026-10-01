@@ -17,13 +17,13 @@ import '../../models/request_model.dart';
 import '../../models/team_model.dart';
 import '../camera/camera_screen.dart';
 import '../profile/profile_screen.dart';
-import '../../widgets/animated_card.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/password_setup_banner.dart';
 import '../../widgets/leave_request_banner.dart';
 import '../../widgets/permission_guidance_dialog.dart';
 import '../../widgets/permission_status_card.dart';
 import '../../config/api_config.dart';
+import '../../services/push_notification_service.dart';
 import '../../utils/toast_helper.dart';
 import '../../services/team_service.dart';
 import '../../services/persistent_notification_service.dart';
@@ -34,6 +34,11 @@ import '../notifications/notification_screen.dart';
 import '../../models/checkpoint_model.dart';
 import '../activity/activity_form_screen.dart';
 import '../shifts/my_shift_screen.dart';
+import 'home_insights.dart';
+import '../../utils/clock.dart';
+import '../attendance/attendance_qr_scanner_screen.dart';
+import '../patroli/patroli_screen.dart';
+import '../../utils/security_position.dart';
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
@@ -115,13 +120,16 @@ class _HomeTabState extends State<HomeTab>
 
   Future<void> _fetchUnreadCount() async {
     try {
-      final response = await ApiService().get(ApiConfig.notificationUnreadCount);
+      final response = await ApiService().get(
+        ApiConfig.notificationUnreadCount,
+      );
       final count = response.data['unreadCount'] as int? ?? 0;
       if (mounted && !_isDisposed) {
         setState(() => _unreadNotifCount = count);
       }
     } catch (_) {}
   }
+
   bool _gpsCheckInProgress = false;
   bool _gpsPrompted = false;
   bool _shouldRetryCheckInAfterGpsPrompt = false;
@@ -157,9 +165,11 @@ class _HomeTabState extends State<HomeTab>
     WidgetsBinding.instance.addObserver(this);
     _startShiftUiTimer();
     _fetchUnreadCount();
+    PushNotificationService.incomingMessageTick.addListener(_fetchUnreadCount);
 
     debugPrint('[HomeTab] Initializing...');
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       // Register rating callback setelah checkout sukses
       final attendanceProv = Provider.of<AttendanceProvider>(
         context,
@@ -204,7 +214,14 @@ class _HomeTabState extends State<HomeTab>
       // Load attendance dengan default bulan ini
       // Load dari cache dulu untuk instant display, lalu refresh dari API
       final now = DateTime.now();
-      final startDate = DateTime(now.year, now.month, 1);
+      // Mundur 2 hari dari awal bulan agar shift malam akhir bulan lalu
+      // yang melewati tengah malam/pergantian bulan tetap ikut di-fetch
+      // sehingga tombol checkout muncul di hari pertama bulan baru.
+      final startDate = DateTime(
+        now.year,
+        now.month,
+        1,
+      ).subtract(const Duration(days: 2));
       attendanceProvider
           .loadAttendance(
             startDate: startDate,
@@ -241,6 +258,7 @@ class _HomeTabState extends State<HomeTab>
       Provider.of<ShiftProvider>(context, listen: false).loadShifts();
       Provider.of<RequestProvider>(context, listen: false).loadRequests();
       _ensureGpsActive(promptSettings: false);
+      attendanceProvider.loadQrAttendanceFlag();
     });
   }
 
@@ -304,6 +322,7 @@ class _HomeTabState extends State<HomeTab>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PushNotificationService.incomingMessageTick.removeListener(_fetchUnreadCount);
     _isDisposed = true;
     _isMapDisposed = true;
     _geofenceMapController?.dispose();
@@ -325,6 +344,7 @@ class _HomeTabState extends State<HomeTab>
     // Saat app kembali ke foreground, hitung durasi langsung dari database (tidak perlu timer di background)
     if (state == AppLifecycleState.resumed) {
       _startShiftUiTimer();
+      _fetchUnreadCount();
       debugPrint('[HomeTab] App resumed - calculating duration from database');
       _ensureGpsActive(promptSettings: false);
       final attendanceProvider = Provider.of<AttendanceProvider>(
@@ -360,7 +380,11 @@ class _HomeTabState extends State<HomeTab>
 
       // Refresh data dari API di background (tidak blocking)
       final now = DateTime.now();
-      final startDate = DateTime(now.year, now.month, 1);
+      final startDate = DateTime(
+        now.year,
+        now.month,
+        1,
+      ).subtract(const Duration(days: 2));
       attendanceProvider
           .loadAttendance(
             startDate: startDate,
@@ -2875,58 +2899,40 @@ class _HomeTabState extends State<HomeTab>
 
   /// Skeleton untuk kartu Kehadiran Hari Ini (saat loading)
   Widget _buildAttendanceCardSkeleton(BuildContext context) {
+    // Bentuknya mengikuti kartu absen: judul, baris shift, tombol utama
     return Container(
-      margin: const EdgeInsets.only(bottom: 20),
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        border: Border.all(color: Colors.grey[200]!),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header skeleton
+          ShimmerLoading(
+            width: 160,
+            height: 14,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          const SizedBox(height: 8),
+          ShimmerLoading(
+            width: 140,
+            height: 20,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          const SizedBox(height: 16),
+          ShimmerLoading(
+            width: 220,
+            height: 16,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          const SizedBox(height: 16),
           ShimmerLoading(
             width: double.infinity,
-            height: 68,
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(16),
-              topRight: Radius.circular(16),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Waktu Bekerja skeleton
-                ShimmerLoading(
-                  width: double.infinity,
-                  height: 72,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                const SizedBox(height: 12),
-                // Task card placeholder
-                ShimmerLoading(
-                  width: double.infinity,
-                  height: 52,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                const SizedBox(height: 12),
-                // Button skeleton
-                ShimmerLoading(
-                  width: double.infinity,
-                  height: 48,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ],
-            ),
+            height: 52,
+            borderRadius: BorderRadius.circular(12),
           ),
         ],
       ),
@@ -2972,691 +2978,652 @@ class _HomeTabState extends State<HomeTab>
           _checkAndStartTimer(attendanceProvider);
         });
 
-        // Kartu kehadiran lebar penuh area konten, header ringkas
+        final isBlocked = shiftProvider.shiftData?.blocked ?? false;
+        // todayAttendance hanya berisi absen yang masih terbuka. Hari dianggap selesai bila sudah ada
+        // absen yang ditutup dan tidak ada shift tersisa (server menolak check-in ulang: tanpa shift
+        // hanya sekali sehari, shift yang sudah check-out tidak bisa check-in lagi).
+        final completedToday = todayRecords
+            .where((r) => r.checkIn != null && r.checkOut != null)
+            .toList();
+        final dayComplete =
+            !hasCheckedIn &&
+            completedToday.isNotEmpty &&
+            (todayShifts.isEmpty ||
+                _getRemainingShifts(todayShifts, todayRecords).isEmpty);
+        final breakOpen =
+            attendanceProvider.breakState?.activeSession != null ||
+            (today?.breakStatus ?? '').toLowerCase() == 'active';
+        // QR ditawarkan bila site punya layar absen; tidak saat istirahat masih terbuka
+        final showQrButton =
+            attendanceProvider.qrAttendanceEnabled &&
+            !offDayPendingCheckout &&
+            !isBlocked &&
+            !hasCheckedOut &&
+            !dayComplete &&
+            !(hasCheckedIn && breakOpen);
+
+        // Kartu absen hari ini: status, shift, lalu satu aksi utama (Check-In atau Check-Out)
         return Container(
-          margin: const EdgeInsets.only(bottom: 20),
+          margin: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 3),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildTodayHeader(
+                hasCheckedIn: hasCheckedIn || dayComplete,
+                hasCheckedOut: hasCheckedOut || dayComplete,
               ),
+              const SizedBox(height: 12),
+              if (dayComplete)
+                _buildWorkingTimeBlock(
+                  attendanceProvider,
+                  completedToday.last,
+                  hasCheckedOut: true,
+                )
+              else if (hasCheckedIn)
+                _buildWorkingTimeBlock(
+                  attendanceProvider,
+                  today,
+                  hasCheckedOut: hasCheckedOut,
+                )
+              else if (!offDayPendingCheckout)
+                _buildShiftSelectionInCard(context),
+              const SizedBox(height: 16),
+              if (offDayPendingCheckout)
+                _buildDisabledCheckInButton(
+                  context,
+                  label: 'Check-In',
+                  message:
+                      'Shift hari ini OFF. Hubungi supervisor untuk koreksi check-out yang tertunda.',
+                )
+              else if (dayComplete)
+                _buildDoneTodayRow()
+              else if (!hasCheckedIn)
+                _buildCheckInButton(context)
+              else if (!hasCheckedOut)
+                _buildActiveAttendanceActionSection(
+                  context,
+                  attendanceProvider: attendanceProvider,
+                  todayShifts: todayShifts,
+                  today: today,
+                )
+              else
+                _buildDoneTodayRow(),
+              if (showQrButton) ...[
+                const SizedBox(height: 8),
+                _buildQrAttendanceButton(checkOut: hasCheckedIn),
+              ],
+              if (!hasCheckedOut && !offDayPendingCheckout && !dayComplete) ...[
+                const SizedBox(height: 14),
+                _buildGeofenceHint(context, forCheckOut: hasCheckedIn),
+              ],
+              const SizedBox(height: 12),
+              const _CheckpointProgressCard(),
+              // Rincian shift hanya saat bekerja atau bila shift lebih dari satu (tidak mengulang info)
+              if (hasCheckedIn || totalShiftCount > 1) ...[
+                const SizedBox(height: 4),
+                _buildShiftDetailsSection(
+                  shiftItems: shiftItems,
+                  completedCount: completedCount,
+                  inProgressCount: inProgressCount,
+                  totalShiftCount: totalShiftCount,
+                  noShiftToday: noShiftToday,
+                  totalWorkLabel: totalWorkLabel,
+                ),
+              ],
             ],
           ),
+        );
+      },
+    );
+  }
+
+  /// Judul kartu: tanggal, "Absen hari ini", dan status singkat hari ini.
+  Widget _buildTodayHeader({
+    required bool hasCheckedIn,
+    required bool hasCheckedOut,
+  }) {
+    final String status;
+    final Color statusColor;
+    if (!hasCheckedIn) {
+      status = 'Belum check-in';
+      statusColor = Colors.grey[700]!;
+    } else if (!hasCheckedOut) {
+      status = 'Sedang bekerja';
+      statusColor = Colors.green[900]!;
+    } else {
+      status = 'Selesai';
+      statusColor = Colors.grey[700]!;
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header ringkas: tanggal + judul satu blok seamless
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Colors.blue[700]!, Colors.blue[600]!],
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    topRight: Radius.circular(16),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.calendar_today_rounded,
-                      color: Colors.white.withOpacity(0.95),
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            DateFormat(
-                              'EEE, dd MMM yyyy',
-                              'id_ID',
-                            ).format(DateTime.now()),
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.95),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          const Text(
-                            'Kehadiran Hari Ini',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+              Text(
+                DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(DateTime.now()),
+                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Absen hari ini',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[900],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(16),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            status,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: statusColor,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Waktu bekerja berjalan, jam masuk/pulang, dan lokasi yang tercatat saat absen.
+  Widget _buildWorkingTimeBlock(
+    AttendanceProvider attendanceProvider,
+    AttendanceRecord? today, {
+    required bool hasCheckedOut,
+  }) {
+    final checkInLocation =
+        today?.checkInLocation ?? (hasCheckedOut ? null : today?.location);
+    final checkOutLocation = hasCheckedOut
+        ? (today?.checkOutLocation ?? today?.location)
+        : null;
+    final trackingText = !attendanceProvider.isTrackingEnabledByPolicy
+        ? 'Pelacakan lokasi tidak aktif di site ini.'
+        : attendanceProvider.isRealtimeTracking
+        ? 'Lokasi dikirim berkala selama bekerja.'
+        : 'Pelacakan lokasi aktif, menunggu lokasi pertama terkirim.';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            hasCheckedOut ? 'Total waktu kerja' : 'Waktu bekerja',
+            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+          ),
+          const SizedBox(height: 2),
+          // Hanya angka durasi yang dibangun ulang tiap detik
+          ValueListenableBuilder<String>(
+            valueListenable: _durationNotifier,
+            builder: (context, duration, _) {
+              final value = hasCheckedOut
+                  ? _formatDuration(
+                      _parseCheckInDateTime(today),
+                      checkOutDateTime: _parseCheckOutDateTime(today),
+                    )
+                  : duration;
+              return Text(
+                value,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[900],
+                  fontFeatures: const [ui.FontFeature.tabularFigures()],
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _buildTimeCell('Masuk', today?.checkIn, checkInLocation),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTimeCell(
+                  'Pulang',
+                  today?.checkOut,
+                  checkOutLocation,
+                ),
+              ),
+            ],
+          ),
+          if (!hasCheckedOut) ...[
+            const SizedBox(height: 10),
+            Text(
+              trackingText,
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeCell(String label, String? time, Location? location) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+        const SizedBox(height: 2),
+        Text(
+          time ?? '-',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[900],
+          ),
+        ),
+        if (location != null)
+          Text(
+            '${location.lat.toStringAsFixed(5)}, ${location.lng.toStringAsFixed(5)}',
+            style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDoneTodayRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.green[50],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.check_circle, color: Colors.green[700], size: 20),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Absen hari ini selesai',
+              style: TextStyle(
+                color: Colors.green[900],
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Tombol kedua di bawah aksi utama: absen dengan QR dari layar absen.
+  Widget _buildQrAttendanceButton({required bool checkOut}) {
+    return OutlinedButton.icon(
+      onPressed: () => _openQrAttendance(checkOut: checkOut),
+      icon: const Icon(Icons.qr_code_scanner, size: 20),
+      label: Text(checkOut ? 'Check-out dengan QR' : 'Check-in dengan QR'),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.blue[800],
+        side: BorderSide(color: Colors.blue[300]!),
+        minimumSize: const Size.fromHeight(48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
+
+  Future<void> _openQrAttendance({required bool checkOut}) async {
+    final attendanceProvider = Provider.of<AttendanceProvider>(
+      context,
+      listen: false,
+    );
+    final shiftProvider = Provider.of<ShiftProvider>(context, listen: false);
+    final message = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => AttendanceQrScannerScreen(checkOut: checkOut),
+      ),
+    );
+    if (!mounted || message == null) return;
+    ToastHelper.showSuccess(context, message);
+    final today = attendanceProvider.todayAttendance;
+    if (checkOut) {
+      _durationTimer?.cancel();
+      _checkInDateTime = today != null ? _parseCheckInDateTime(today) : null;
+      if (_checkInDateTime != null && today != null) {
+        _setDuration(
+          _formatDuration(
+            _checkInDateTime,
+            checkOutDateTime: _parseCheckOutDateTime(today),
+          ),
+        );
+      }
+    } else {
+      _checkInDateTime = _parseCheckInDateTime(today);
+      _startDurationTimer();
+      if (today != null) {
+        _syncPersistentNotification(today, shiftProvider);
+      }
+    }
+    try {
+      await shiftProvider.loadShifts();
+    } catch (e) {
+      debugPrint('[HomeTab] Gagal memuat shift setelah absen QR: $e');
+    }
+  }
+
+  /// Rincian shift hari ini (jam shift, masuk/pulang, istirahat).
+  Widget _buildShiftDetailsSection({
+    required List<_ShiftStatusItem> shiftItems,
+    required int completedCount,
+    required int inProgressCount,
+    required int totalShiftCount,
+    required bool noShiftToday,
+    required String totalWorkLabel,
+  }) {
+    return ValueListenableBuilder<DateTime>(
+      valueListenable: _shiftClockNotifier,
+      builder: (context, now, _) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.grey[50],
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey[200]!),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Rincian shift hari ini',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey[800],
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...shiftItems.map((item) {
+              final status = item.status;
+              final statusColor = status == 'Selesai'
+                  ? Colors.green[600]
+                  : status == 'Sedang bekerja'
+                  ? Colors.blue[600]
+                  : Colors.orange[700];
+              final breakStages = _buildShiftTimelineStages(
+                item.shift,
+                item.record,
+                now,
+              );
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Working Time Section
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 12,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.blue[50],
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.blue[100]!, width: 1),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.blue[100],
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Icon(
-                              Icons.timer_outlined,
-                              color: Colors.blue[700],
-                              size: 22,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.title,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.grey[900],
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Waktu Bekerja',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.grey[600],
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                // Use ValueListenableBuilder untuk hanya rebuild bagian duration saja
-                                ValueListenableBuilder<String>(
-                                  valueListenable: _durationNotifier,
-                                  builder: (context, duration, _) {
-                                    // Jika sudah check-out, gunakan total durasi (fixed)
-                                    if (hasCheckedOut) {
-                                      final totalDuration = _formatDuration(
-                                        _checkInDateTime ??
-                                            _parseCheckInDateTime(today),
-                                        checkOutDateTime:
-                                            _parseCheckOutDateTime(today),
-                                      );
-                                      return Text(
-                                        totalDuration,
-                                        style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.blue[900],
-                                          letterSpacing: 1.2,
-                                        ),
-                                      );
-                                    }
-                                    // Jika belum check-out, gunakan duration dari notifier (real-time)
-                                    return Text(
-                                      hasCheckedIn ? duration : '00 : 00 : 00',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.blue[900],
-                                        letterSpacing: 1.2,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor?.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: statusColor ?? Colors.grey,
                             ),
                           ),
-                        ],
-                      ),
+                          child: Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    // Location Section - Check-In and Check-Out
-                    if (hasCheckedIn || hasCheckedOut) ...[
-                      // Check-In Location
-                      if (hasCheckedIn)
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          margin: const EdgeInsets.only(bottom: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.green[50],
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.green[200]!),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.login,
-                                size: 18,
-                                color: Colors.green[700],
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Lokasi Check-In',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green[900],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      today?.checkInLocation != null
-                                          ? '${today!.checkInLocation!.lat.toStringAsFixed(6)}, ${today.checkInLocation!.lng.toStringAsFixed(6)}'
-                                          : (today?.location != null &&
-                                                    !hasCheckedOut
-                                                ? '${today!.location!.lat.toStringAsFixed(6)}, ${today.location!.lng.toStringAsFixed(6)}'
-                                                : 'Lokasi tidak tersedia'),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                    const SizedBox(height: 4),
+                    Text(
+                      item.range,
+                      style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Text(
+                          "Masuk: ${item.checkIn}",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[800],
+                            fontFamily: 'monospace',
                           ),
                         ),
-                      // Check-Out Location
-                      if (hasCheckedOut)
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.blue[200]!),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.logout,
-                                size: 18,
-                                color: Colors.blue[700],
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Lokasi Check-Out',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.blue[900],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      today?.checkOutLocation != null
-                                          ? '${today!.checkOutLocation!.lat.toStringAsFixed(6)}, ${today.checkOutLocation!.lng.toStringAsFixed(6)}'
-                                          : (today?.location != null
-                                                ? '${today!.location!.lat.toStringAsFixed(6)}, ${today.location!.lng.toStringAsFixed(6)}'
-                                                : 'Lokasi tidak tersedia'),
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                        const SizedBox(width: 12),
+                        Text(
+                          "Pulang: ${item.checkOut}",
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[800],
+                            fontFamily: 'monospace',
                           ),
                         ),
-                    ] else
-                      _buildGeofenceHint(context, forCheckOut: false),
-                    // Shift Selection (hanya muncul jika belum check-in)
-                    if (!hasCheckedIn && !offDayPendingCheckout) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        'SHIFT',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                          letterSpacing: 1.5,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      _buildShiftSelectionInCard(context),
-                    ],
-                    const SizedBox(height: 20),
-                    // Warning text jika shift belum dipilih (hanya muncul jika belum check-in)
-                    if (!hasCheckedIn && !offDayPendingCheckout)
-                      _buildShiftWarning(context),
-                    if (!hasCheckedIn && !offDayPendingCheckout)
-                      const SizedBox(height: 12),
-                    if (hasCheckedIn &&
-                        !hasCheckedOut &&
-                        !offDayPendingCheckout) ...[
-                      _buildGeofenceHint(context, forCheckOut: true),
-                      const SizedBox(height: 12),
-                    ],
-                    // Tugas Hari Ini (di atas tombol check-in)
-                    const _CheckpointProgressCard(),
-                    const SizedBox(height: 12),
-                    // Check-In/Check-Out Button
-                    if (offDayPendingCheckout)
-                      _buildDisabledCheckInButton(
-                        context,
-                        label: 'Check-In',
-                        message:
-                            'Shift hari ini OFF. Hubungi supervisor untuk koreksi check-out yang tertunda.',
-                      )
-                    else if (!hasCheckedIn)
-                      _buildCheckInButton(context)
-                    else if (!hasCheckedOut)
-                      _buildActiveAttendanceActionSection(
-                        context,
-                        attendanceProvider: attendanceProvider,
-                        todayShifts: todayShifts,
-                        today: today,
-                      )
-                    else
+                      ],
+                    ),
+                    if (breakStages.isNotEmpty) ...[
+                      const SizedBox(height: 10),
                       Container(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Colors.green[50]!, Colors.green[100]!],
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.green[200]!,
-                            width: 1.5,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: Colors.green[400],
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.check_circle,
-                                color: Colors.white,
-                                size: 18,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              'Check-in & Check-out selesai',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                    const SizedBox(height: 16),
-                    // Shift Summary Section
-                    ValueListenableBuilder<DateTime>(
-                      valueListenable: _shiftClockNotifier,
-                      builder: (context, now, _) => Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey[200]!),
+                          color: Colors.blueGrey[50],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.blueGrey[100]!),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Rincian Shift Hari Ini',
+                              'Timeline shift & istirahat',
                               style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[800],
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            ...shiftItems.map((item) {
-                              final status = item.status;
-                              final statusColor = status == 'Selesai'
-                                  ? Colors.green[600]
-                                  : status == 'Sedang bekerja'
-                                  ? Colors.blue[600]
-                                  : Colors.orange[700];
-                              final breakStages = _buildShiftTimelineStages(
-                                item.shift,
-                                item.record,
-                                now,
-                              );
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: Colors.grey[200]!),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            item.title,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.grey[900],
-                                            ),
-                                          ),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: statusColor?.withOpacity(
-                                              0.12,
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              20,
-                                            ),
-                                            border: Border.all(
-                                              color: statusColor ?? Colors.grey,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            status,
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                              color: statusColor,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      item.range,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey[600],
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Row(
-                                      children: [
-                                        Text(
-                                          "In: ${item.checkIn}",
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey[800],
-                                            fontFamily: 'monospace',
-                                          ),
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          "Out: ${item.checkOut}",
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey[800],
-                                            fontFamily: 'monospace',
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    if (breakStages.isNotEmpty) ...[
-                                      const SizedBox(height: 10),
-                                      Container(
-                                        padding: const EdgeInsets.all(10),
-                                        decoration: BoxDecoration(
-                                          color: Colors.blueGrey[50],
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.blueGrey[100]!,
-                                          ),
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              'Timeline shift & istirahat',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.blueGrey[700],
-                                                letterSpacing: 0.2,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            ...breakStages.map((stage) {
-                                              return Container(
-                                                margin: const EdgeInsets.only(
-                                                  bottom: 6,
-                                                ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 10,
-                                                      vertical: 8,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: stage.color
-                                                      .withOpacity(0.08),
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                  border: Border.all(
-                                                    color: stage.color
-                                                        .withOpacity(0.25),
-                                                  ),
-                                                ),
-                                                child: Row(
-                                                  children: [
-                                                    Icon(
-                                                      stage.icon,
-                                                      size: 16,
-                                                      color: stage.color,
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    Expanded(
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .start,
-                                                        children: [
-                                                          Text(
-                                                            stage.label,
-                                                            style: TextStyle(
-                                                              fontSize: 11,
-                                                              fontWeight:
-                                                                  FontWeight
-                                                                      .w700,
-                                                              color: Colors
-                                                                  .grey[900],
-                                                            ),
-                                                          ),
-                                                          const SizedBox(
-                                                            height: 2,
-                                                          ),
-                                                          Text(
-                                                            stage.range,
-                                                            style: TextStyle(
-                                                              fontSize: 10,
-                                                              color: Colors
-                                                                  .grey[600],
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                    Container(
-                                                      padding:
-                                                          const EdgeInsets.symmetric(
-                                                            horizontal: 8,
-                                                            vertical: 4,
-                                                          ),
-                                                      decoration: BoxDecoration(
-                                                        color: stage.color
-                                                            .withOpacity(0.12),
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              20,
-                                                            ),
-                                                      ),
-                                                      child: Text(
-                                                        stage.status,
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                          color: stage.color,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            }),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              );
-                            }).toList(),
-                            const SizedBox(height: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    completedCount == totalShiftCount &&
-                                        totalShiftCount > 0
-                                    ? Colors.green[50]
-                                    : inProgressCount > 0
-                                    ? Colors.blue[50]
-                                    : Colors.orange[50],
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color:
-                                      completedCount == totalShiftCount &&
-                                          totalShiftCount > 0
-                                      ? Colors.green[200]!
-                                      : inProgressCount > 0
-                                      ? Colors.blue[200]!
-                                      : Colors.orange[200]!,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    completedCount == totalShiftCount &&
-                                            totalShiftCount > 0
-                                        ? Icons.check_circle
-                                        : inProgressCount > 0
-                                        ? Icons.timelapse
-                                        : Icons.info_outline,
-                                    size: 16,
-                                    color:
-                                        completedCount == totalShiftCount &&
-                                            totalShiftCount > 0
-                                        ? Colors.green[700]
-                                        : inProgressCount > 0
-                                        ? Colors.blue[700]
-                                        : Colors.orange[700],
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      noShiftToday
-                                          ? 'Belum ada shift hari ini.'
-                                          : completedCount == totalShiftCount
-                                          ? 'Semua shift hari ini selesai.'
-                                          : 'Selesai $completedCount dari $totalShiftCount shift.',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.grey[800],
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.blueGrey[700],
+                                letterSpacing: 0.2,
                               ),
                             ),
                             const SizedBox(height: 8),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Total Jam Kerja',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.grey[700],
+                            ...breakStages.map((stage) {
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 6),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: stage.color.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: stage.color.withOpacity(0.25),
                                   ),
                                 ),
-                                Text(
-                                  totalWorkLabel,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.blue[800],
-                                    letterSpacing: 1.0,
-                                  ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      stage.icon,
+                                      size: 16,
+                                      color: stage.color,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            stage.label,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.grey[900],
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            stage.range,
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: stage.color.withOpacity(0.12),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: Text(
+                                        stage.status,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color: stage.color,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              );
+                            }),
                           ],
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 16),
+                    ],
                   ],
                 ),
+              );
+            }).toList(),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: completedCount == totalShiftCount && totalShiftCount > 0
+                    ? Colors.green[50]
+                    : inProgressCount > 0
+                    ? Colors.blue[50]
+                    : Colors.orange[50],
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color:
+                      completedCount == totalShiftCount && totalShiftCount > 0
+                      ? Colors.green[200]!
+                      : inProgressCount > 0
+                      ? Colors.blue[200]!
+                      : Colors.orange[200]!,
+                ),
               ),
-            ],
-          ),
-        );
-      },
+              child: Row(
+                children: [
+                  Icon(
+                    completedCount == totalShiftCount && totalShiftCount > 0
+                        ? Icons.check_circle
+                        : inProgressCount > 0
+                        ? Icons.timelapse
+                        : Icons.info_outline,
+                    size: 16,
+                    color:
+                        completedCount == totalShiftCount && totalShiftCount > 0
+                        ? Colors.green[700]
+                        : inProgressCount > 0
+                        ? Colors.blue[700]
+                        : Colors.orange[700],
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      noShiftToday
+                          ? 'Belum ada shift hari ini.'
+                          : completedCount == totalShiftCount
+                          ? 'Semua shift hari ini selesai.'
+                          : 'Selesai $completedCount dari $totalShiftCount shift.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Total jam kerja',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[700],
+                  ),
+                ),
+                Text(
+                  totalWorkLabel,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue[800],
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -3760,60 +3727,94 @@ class _HomeTabState extends State<HomeTab>
         if (shiftProvider.isLoading) {
           return _buildShiftQuickActionsSkeleton();
         }
+        final user = Provider.of<AuthProvider>(context, listen: false).user;
+        final showPatrol = isSecurityPosition(user);
 
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
+        return Material(
+          color: Colors.white,
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: Colors.grey[200]!),
           ),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                'Shift Saya',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.grey.shade800,
+              if (_isOffDay(shiftProvider.todayShifts))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: _buildOffShiftBanner(),
                 ),
+              _buildShortcutRow(
+                icon: Icons.calendar_month_outlined,
+                label: 'Jadwal shift saya',
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const MyShiftScreen()),
+                  );
+                },
               ),
-              const SizedBox(height: 12),
-              if (_isOffDay(shiftProvider.todayShifts)) ...[
-                _buildOffShiftBanner(),
-                const SizedBox(height: 12),
+              if (showPatrol) ...[
+                Divider(height: 1, indent: 56, color: Colors.grey[200]),
+                _buildShortcutRow(
+                  icon: Icons.qr_code_2,
+                  label: 'Patroli',
+                  subtitle: 'Scan stiker titik patroli di site',
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const PatroliScreen()),
+                    );
+                  },
+                ),
               ],
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const MyShiftScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.calendar_month),
-                      label: const Text('Lihat Shift Saya'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildShortcutRow({
+    required IconData icon,
+    required String label,
+    String? subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 56),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.blue[700], size: 24),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[900],
+                      ),
+                    ),
+                    if (subtitle != null)
+                      Text(
+                        subtitle,
+                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                      ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey[600]),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -3869,93 +3870,48 @@ class _HomeTabState extends State<HomeTab>
         if (todayShifts.isEmpty) {
           // Tidak ada shift yang di-assign dan tidak ada shift template
           // Tampilkan info bahwa absen bisa dilakukan tanpa shift
-          return Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue[200]!, width: 1.5),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Anda dapat melakukan absen tanpa memilih shift',
-                    style: TextStyle(color: Colors.blue[900], fontSize: 12),
-                  ),
+          return Row(
+            children: [
+              Icon(Icons.schedule, size: 18, color: Colors.grey[700]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Tidak ada shift terjadwal hari ini. Absen tetap bisa tanpa shift.',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[800]),
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         }
 
         if (todayShifts.length == 1) {
           final todayShift = todayShifts.first;
-          final shiftCard = Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue[200]!),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: todayShift.color != null
-                        ? Color(
-                            int.parse(
-                              'FF${todayShift.color!.replaceAll('#', '')}',
-                              radix: 16,
-                            ),
-                          )
-                        : Colors.blue,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          final shiftCard = Row(
+            children: [
+              Icon(Icons.schedule, size: 18, color: Colors.grey[700]),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
                     children: [
-                      Text(
-                        '${todayShift.name} (${todayShift.code})',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                      TextSpan(
+                        text: todayShift.name,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[900],
                         ),
                       ),
-                      Text(
-                        '${todayShift.startTime} - ${todayShift.endTime}',
-                        style: TextStyle(color: Colors.grey[700], fontSize: 11),
+                      TextSpan(
+                        text:
+                            '  ${todayShift.startTime} - ${todayShift.endTime}',
+                        style: TextStyle(color: Colors.grey[800]),
                       ),
                     ],
                   ),
+                  style: const TextStyle(fontSize: 15),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.blue[100],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'Assigned',
-                    style: TextStyle(
-                      color: Colors.blue[900],
-                      fontSize: 9,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           );
 
           if (!allCompleted) {
@@ -4045,10 +4001,6 @@ class _HomeTabState extends State<HomeTab>
     );
   }
 
-  Widget _buildShiftWarning(BuildContext context) {
-    return const SizedBox.shrink();
-  }
-
   String? _resolvePlacementName(String? siteName) {
     final trimmed = siteName?.trim();
     if (trimmed == null || trimmed.isEmpty) {
@@ -4082,10 +4034,10 @@ class _HomeTabState extends State<HomeTab>
     if (hasGeofence) {
       final placementName = _resolvePlacementName(site?.name);
       final locationLabel = placementName ?? 'lokasi penempatan';
-      return 'GPS wajib aktif. Anda harus berada dalam radius ${radius}m dari $locationLabel untuk $actionLabel.';
+      return 'Untuk $actionLabel, Anda harus berada dalam radius $radius\u00A0m dari $locationLabel. GPS harus aktif.';
     }
 
-    return 'GPS wajib aktif. Pastikan berada di lokasi penempatan saat $actionLabel.';
+    return 'Untuk $actionLabel, pastikan Anda berada di lokasi penempatan. GPS harus aktif.';
   }
 
   Widget _buildGeofenceHint(BuildContext context, {required bool forCheckOut}) {
@@ -4103,7 +4055,28 @@ class _HomeTabState extends State<HomeTab>
         : null;
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(Icons.gps_fixed, size: 16, color: Colors.grey[700]),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.35,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ),
+          ],
+        ),
         if (hasCoordinates)
           _buildGeofenceMapPreview(
             latitude: latitude!,
@@ -4113,26 +4086,6 @@ class _HomeTabState extends State<HomeTab>
             userName: user?.name,
             userPhotoUrl: resolvedPhotoUrl,
           ),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Colors.orange[50],
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.orange[200]!),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.gps_fixed, size: 18, color: Colors.orange[700]),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  message,
-                  style: TextStyle(fontSize: 12, color: Colors.orange[900]),
-                ),
-              ),
-            ],
-          ),
-        ),
       ],
     );
   }
@@ -4217,10 +4170,10 @@ class _HomeTabState extends State<HomeTab>
 
     return Container(
       height: 170,
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.orange[200]!, width: 1.2),
+        border: Border.all(color: Colors.grey[300]!),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
@@ -4332,7 +4285,7 @@ class _HomeTabState extends State<HomeTab>
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 decoration: BoxDecoration(
-                  color: Colors.green[300],
+                  color: Colors.blue[300],
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Center(
@@ -4367,7 +4320,9 @@ class _HomeTabState extends State<HomeTab>
             return ElevatedButton(
               onPressed: isDisabled ? null : _handleCheckIn,
               style: ElevatedButton.styleFrom(
-                backgroundColor: isDisabled ? Colors.grey[400] : Colors.green,
+                backgroundColor: isDisabled
+                    ? Colors.grey[400]
+                    : Colors.blue[700],
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
@@ -4418,7 +4373,7 @@ class _HomeTabState extends State<HomeTab>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 14),
             decoration: BoxDecoration(
-              color: Colors.red[300],
+              color: Colors.blue[300],
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Center(
@@ -4451,7 +4406,7 @@ class _HomeTabState extends State<HomeTab>
         return ElevatedButton(
           onPressed: isDisabled ? null : _handleCheckOut,
           style: ElevatedButton.styleFrom(
-            backgroundColor: isDisabled ? Colors.grey[400] : Colors.red,
+            backgroundColor: isDisabled ? Colors.grey[400] : Colors.blue[700],
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 14),
             shape: RoundedRectangleBorder(
@@ -4742,22 +4697,203 @@ class _HomeTabState extends State<HomeTab>
     );
   }
 
-  Color _getStatusColor(String status) {
+  Widget _buildMonthSummaryCard(
+    BuildContext context,
+    Map<String, int> stats,
+    List<AttendanceRecord> records,
+  ) {
+    final monthLabel = DateFormat('MMMM yyyy', 'id_ID').format(DateTime.now());
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Kehadiran $monthLabel',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              color: Colors.grey[900],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Tinggi sel sama walau label terbungkus dua baris
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildStatCard(
+                    context,
+                    count: stats['present'] ?? 0,
+                    label: 'Hadir',
+                    color: _getStatusColor('present'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildStatCard(
+                    context,
+                    count: stats['late'] ?? 0,
+                    label: 'Terlambat',
+                    color: _getStatusColor('late'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildStatCard(
+                    context,
+                    count: stats['absent'] ?? 0,
+                    label: 'Tidak hadir',
+                    color: _getStatusColor('absent'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          AttendanceKpiRow(records: records),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentHistoryCard(
+    BuildContext context,
+    AttendanceProvider attendanceProvider,
+  ) {
+    final recent = attendanceProvider.recentAttendance;
+    if (recent.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final items = recent.take(5).toList();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Riwayat absen',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey[900],
+                  ),
+                ),
+              ),
+              if (recent.length > items.length)
+                TextButton(
+                  onPressed: () => Navigator.pushNamed(context, '/attendance'),
+                  child: const Text('Lihat semua'),
+                ),
+            ],
+          ),
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) Divider(height: 1, color: Colors.grey[200]),
+            _buildHistoryRow(items[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHistoryRow(AttendanceRecord record) {
+    final date = DateTime.tryParse(record.date);
+    final dateLabel = date != null
+        ? DateFormat('EEE, d MMM', 'id_ID').format(date)
+        : record.date;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  dateLabel,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[900],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _statusLabel(record.status),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _getStatusColor(record.status),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            record.checkOut == null && record.checkIn != null
+                ? '${clockLabel(record.checkIn) ?? record.checkIn} · belum pulang'
+                : '${clockLabel(record.checkIn) ?? "-"} - ${clockLabel(record.checkOut) ?? "-"}',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[800],
+              fontFeatures: const [ui.FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _statusLabel(String status) {
     switch (status.toLowerCase()) {
       case 'present':
-        return Colors.green;
+        return 'Hadir';
       case 'late':
-        return Colors.orange;
+        return 'Terlambat';
       case 'absent':
-        return Colors.red;
+        return 'Tidak hadir';
       case 'leave':
-        return Colors.blue;
+        return 'Izin';
       case 'sick':
-        return Colors.purple;
+        return 'Sakit';
       case 'remote':
-        return Colors.teal;
+        return 'Kerja jarak jauh';
+      case 'off':
+        return 'Libur';
       default:
-        return Colors.grey;
+        final text = status.replaceAll('_', ' ').trim();
+        return text.isEmpty
+            ? '-'
+            : '${text[0].toUpperCase()}${text.substring(1)}';
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      // Warna teks status: kontras minimal 4,5:1 di atas putih
+      case 'present':
+        return Colors.green[800]!;
+      case 'late':
+        return const Color(0xFFB45309);
+      case 'absent':
+        return Colors.red[700]!;
+      case 'leave':
+        return Colors.blue[700]!;
+      default:
+        return Colors.grey[700]!;
     }
   }
 
@@ -4770,32 +4906,35 @@ class _HomeTabState extends State<HomeTab>
   }) {
     return Container(
       key: key,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: Colors.grey[50],
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
       ),
+      // Titik warna di samping angka, supaya label dapat lebar penuh saat huruf diperbesar
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            count.toString(),
-            style: TextStyle(
-              color: color,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[900],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.grey[700],
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          const SizedBox(height: 2),
+          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[800])),
         ],
       ),
     );
@@ -5006,29 +5145,60 @@ class _HomeTabState extends State<HomeTab>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[100],
+      backgroundColor: const Color(0xFFF6F7F9),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         automaticallyImplyLeading: false,
-        flexibleSpace: _buildUserHeader(context),
+        // Cukup untuk avatar + nama + jabatan saat ukuran huruf sistem diperbesar
+        toolbarHeight: 64,
+        flexibleSpace: MediaQuery.withClampedTextScaling(
+          maxScaleFactor: 1.4,
+          child: _buildUserHeader(context),
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          // Refresh user data first
-          await Provider.of<AuthProvider>(context, listen: false).refreshUser();
+          // Ambil semua provider SEBELUM await pertama. Refresh bisa lama di sinyal
+          // lapangan; kalau user pindah tab / app ke background, widget ini di-dispose
+          // dan `context` tidak valid lagi setelah await.
+          final authProvider = Provider.of<AuthProvider>(
+            context,
+            listen: false,
+          );
+          final attendanceProvider = Provider.of<AttendanceProvider>(
+            context,
+            listen: false,
+          );
+          final shiftProvider = Provider.of<ShiftProvider>(
+            context,
+            listen: false,
+          );
+          final requestProvider = Provider.of<RequestProvider>(
+            context,
+            listen: false,
+          );
+          final activityProvider = Provider.of<ActivityProvider>(
+            context,
+            listen: false,
+          );
+
+          await authProvider.refreshUser();
           // Load attendance dengan default bulan ini
           final now = DateTime.now();
-          final startDate = DateTime(now.year, now.month, 1);
-          await Provider.of<AttendanceProvider>(
-            context,
-            listen: false,
-          ).loadAttendance(startDate: startDate, endDate: now);
-          await Provider.of<ShiftProvider>(context, listen: false).loadShifts();
-          await Provider.of<RequestProvider>(
-            context,
-            listen: false,
-          ).loadRequests();
+          final startDate = DateTime(
+            now.year,
+            now.month,
+            1,
+          ).subtract(const Duration(days: 2));
+          await attendanceProvider.loadAttendance(
+            startDate: startDate,
+            endDate: now,
+          );
+          await shiftProvider.loadShifts();
+          await requestProvider.loadRequests();
+          await activityProvider.loadActivities();
+          await attendanceProvider.loadQrAttendanceFlag();
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -5089,526 +5259,33 @@ class _HomeTabState extends State<HomeTab>
 
             const SizedBox(height: 20),
 
-            // Total Attendance (Days) Section
+            // Rekap kehadiran bulan ini
             Consumer<AttendanceProvider>(
               builder: (context, attendanceProvider, _) {
-                if (attendanceProvider.isLoading) {
-                  return AnimatedCard(
-                    delay: 100,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ShimmerLoading(
-                          width: 180,
-                          height: 20,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, c) => ShimmerLoading(
-                                  width: c.maxWidth,
-                                  height: 72,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, c) => ShimmerLoading(
-                                  width: c.maxWidth,
-                                  height: 72,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, c) => ShimmerLoading(
-                                  width: c.maxWidth,
-                                  height: 72,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
+                final recent = attendanceProvider.recentAttendance;
+                if (attendanceProvider.isLoading && recent.isEmpty) {
+                  return ShimmerLoading(
+                    width: double.infinity,
+                    height: 112,
+                    borderRadius: BorderRadius.circular(16),
                   );
                 }
-                final recent = attendanceProvider.recentAttendance;
-                final stats = _calculateAttendanceStats(recent);
-
-                return AnimatedCard(
-                  delay: 100,
-                  elevation: 4,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Total Attendance (Days)',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildStatCard(
-                              context,
-                              count: stats['present'] ?? 0,
-                              label: 'Present',
-                              color: Colors.green,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildStatCard(
-                              context,
-                              count: stats['late'] ?? 0,
-                              label: 'Late',
-                              color: Colors.orange,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildStatCard(
-                              context,
-                              count: stats['absent'] ?? 0,
-                              label: 'Absent',
-                              color: Colors.red,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                return _buildMonthSummaryCard(
+                  context,
+                  _calculateAttendanceStats(recent),
+                  recent,
                 );
               },
             ),
-
-            const SizedBox(height: 20),
-
-            // Attendance Widget
+            const SizedBox(height: 16),
+            // Kegiatan hari ini (check-in, istirahat, aktivitas, check-out) tepat di bawah KPI kehadiran
+            TodayTimelineCard(
+              onSeeActivities: () => Navigator.pushNamed(context, '/activity'),
+            ),
+            const SizedBox(height: 16),
             Consumer<AttendanceProvider>(
-              builder: (context, attendanceProvider, _) {
-                final today = attendanceProvider.todayAttendance;
-                final recent = attendanceProvider.recentAttendance;
-
-                if (attendanceProvider.isLoading && today == null) {
-                  return AnimatedCard(
-                    delay: 200,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ShimmerLoading(width: 150, height: 20),
-                        const SizedBox(height: 8),
-                        ShimmerLoading(width: 200, height: 16),
-                        const SizedBox(height: 16),
-                        ShimmerLoading(width: double.infinity, height: 80),
-                      ],
-                    ),
-                  );
-                }
-
-                return AnimatedCard(
-                  delay: 200,
-                  elevation: 4,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  Colors.purple[400]!,
-                                  Colors.purple[600]!,
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: const Icon(
-                              Icons.calendar_today,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Attendance Kamu',
-                                  style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  'Realtime status & riwayat sebulan',
-                                  style: TextStyle(
-                                    color: Colors.grey[600],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Consumer<AttendanceProvider>(
-                                  builder: (context, attendanceProvider, _) {
-                                    final today =
-                                        attendanceProvider.todayAttendance;
-                                    final isCheckedIn =
-                                        today?.checkIn != null &&
-                                        today?.checkOut == null;
-                                    if (!isCheckedIn) {
-                                      return const SizedBox.shrink();
-                                    }
-
-                                    final trackingEnabled = attendanceProvider
-                                        .isTrackingEnabledByPolicy;
-                                    final isTracking =
-                                        attendanceProvider.isRealtimeTracking;
-                                    final subtitle = !trackingEnabled
-                                        ? '📍 Tracking realtime nonaktif untuk site ini'
-                                        : isTracking
-                                        ? '📍 Lokasi dilacak realtime saat check-in'
-                                        : '📍 Tracking aktif, menunggu sinkronisasi lokasi';
-
-                                    return Text(
-                                      subtitle,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[600],
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      // Today Status
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [Colors.grey[50]!, Colors.grey[100]!],
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey[200]!),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Hari ini',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[600],
-                                letterSpacing: 1.2,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            if (today != null) ...[
-                              Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          _getStatusColor(
-                                            today.status,
-                                          ).withOpacity(0.3),
-                                          _getStatusColor(
-                                            today.status,
-                                          ).withOpacity(0.1),
-                                        ],
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: _getStatusColor(
-                                          today.status,
-                                        ).withOpacity(0.5),
-                                        width: 1,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      today.status.toUpperCase(),
-                                      style: TextStyle(
-                                        color: _getStatusColor(today.status),
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Consumer<ShiftProvider>(
-                                      builder: (context, shiftProvider, _) {
-                                        String shiftName = '-';
-                                        if (today.shiftId != null) {
-                                          // Cari shift dari todayShifts atau dari shifts list
-                                          DailyShift? shift;
-                                          try {
-                                            shift = shiftProvider.todayShifts
-                                                .firstWhere(
-                                                  (s) => s.id == today.shiftId,
-                                                );
-                                          } catch (e) {
-                                            shift = null;
-                                          }
-                                          if (shift == null) {
-                                            try {
-                                              shift = shiftProvider.shifts
-                                                  .firstWhere(
-                                                    (s) =>
-                                                        s.id == today.shiftId,
-                                                  );
-                                            } catch (e) {
-                                              shift = null;
-                                            }
-                                          }
-                                          shiftName = shift?.name ?? '-';
-                                        }
-                                        return Text(
-                                          'Shift: $shiftName',
-                                          style: TextStyle(
-                                            fontSize: 13,
-                                            color: Colors.grey[700],
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.login,
-                                    size: 16,
-                                    color: Colors.green[600],
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    today.checkIn ?? "-",
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Icon(
-                                    Icons.arrow_forward,
-                                    size: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Icon(
-                                    Icons.logout,
-                                    size: 16,
-                                    color: Colors.orange[600],
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    today.checkOut ?? "-",
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ] else ...[
-                              Row(
-                                children: [
-                                  Icon(
-                                    Icons.info_outline,
-                                    size: 16,
-                                    color: Colors.grey[600],
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Belum ada absensi terekam.',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      color: Colors.grey[600],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      // Recent History
-                      if (recent.isNotEmpty) ...[
-                        const SizedBox(height: 20),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'Riwayat',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey[700],
-                              ),
-                            ),
-                            if (recent.length > 10)
-                              TextButton(
-                                onPressed: () {
-                                  Navigator.pushNamed(context, '/attendance');
-                                },
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  minimumSize: Size.zero,
-                                  tapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                ),
-                                child: Text(
-                                  'Lihat selengkapnya',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.blue[700],
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        GridView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
-                                childAspectRatio: 2.3,
-                              ),
-                          itemCount: recent.length > 10 ? 10 : recent.length,
-                          itemBuilder: (context, idx) {
-                            final record = recent[idx];
-                            return AnimatedCard(
-                              delay: 300 + (idx * 50),
-                              elevation: 2,
-                              padding: const EdgeInsets.all(
-                                8,
-                              ), // Reduced from 10 to 8
-                              color: Colors.white,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                mainAxisSize:
-                                    MainAxisSize.min, // Prevent overflow
-                                children: [
-                                  Text(
-                                    DateFormat(
-                                      'dd MMM yyyy',
-                                    ).format(DateTime.parse(record.date)),
-                                    style: TextStyle(
-                                      fontSize: 9, // Reduced from 10 to 9
-                                      color: Colors.grey[600],
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(
-                                    height: 4,
-                                  ), // Reduced from 6 to 4
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.center,
-                                    children: [
-                                      Flexible(
-                                        flex: 2,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 4,
-                                            vertical: 2,
-                                          ), // Reduced padding
-                                          decoration: BoxDecoration(
-                                            gradient: LinearGradient(
-                                              colors: [
-                                                _getStatusColor(
-                                                  record.status,
-                                                ).withOpacity(0.3),
-                                                _getStatusColor(
-                                                  record.status,
-                                                ).withOpacity(0.1),
-                                              ],
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              6,
-                                            ), // Reduced from 8
-                                          ),
-                                          child: Text(
-                                            record.status.toUpperCase(),
-                                            style: TextStyle(
-                                              color: _getStatusColor(
-                                                record.status,
-                                              ),
-                                              fontSize:
-                                                  8, // Reduced from 9 to 8
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(
-                                        width: 4,
-                                      ), // Add spacing between elements
-                                      Flexible(
-                                        flex: 3,
-                                        child: Text(
-                                          '${record.checkIn ?? "-"} - ${record.checkOut ?? "-"}',
-                                          style: TextStyle(
-                                            fontSize: 8, // Reduced from 9 to 8
-                                            color: Colors.grey[600],
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          textAlign: TextAlign.right,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              },
+              builder: (context, attendanceProvider, _) =>
+                  _buildRecentHistoryCard(context, attendanceProvider),
             ),
           ],
         ),

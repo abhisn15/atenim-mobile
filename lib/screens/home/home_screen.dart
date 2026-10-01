@@ -5,6 +5,7 @@ import '../attendance/attendance_screen.dart';
 import '../activity/activity_screen.dart';
 import '../requests/requests_screen.dart';
 import '../patroli/patroli_screen.dart';
+import '../../utils/security_position.dart';
 import '../settings/settings_screen.dart';
 import '../team/team_screen.dart';
 import '../incident_report/incident_report_screen.dart';
@@ -15,6 +16,7 @@ import '../../providers/attendance_provider.dart';
 import '../../providers/request_provider.dart';
 import '../../providers/shift_provider.dart';
 import '../../providers/checkpoint_provider.dart';
+import '../../providers/patrol_provider.dart';
 import '../../models/user_model.dart';
 import '../../services/global_update_checker.dart';
 import 'home_tab.dart';
@@ -26,7 +28,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   int _currentIndex = 0;
   PageController? _pageController;
   List<AnimationController>? _animationControllers;
@@ -36,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Animation<Offset>? _moreMenuSlide;
   Animation<double>? _moreMenuFade;
   String? _lastCheckpointUserId;
+  String? _lastPatrolUserId;
   Timer? _homeAutoRefreshTimer;
   DateTime? _lastHomeRefreshAt;
   bool _homeRefreshInProgress = false;
@@ -167,6 +171,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _moreMenuController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 320),
@@ -203,6 +208,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     GlobalUpdateChecker.stopAutoCheck();
     _homeAutoRefreshTimer?.cancel();
     _pageController?.dispose();
@@ -246,31 +252,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _ensureHomeAutoRefresh();
       GlobalUpdateChecker.checkNow(context);
     } else {
-      _homeAutoRefreshTimer?.cancel();
-      _homeAutoRefreshTimer = null;
+      _stopHomeAutoRefresh();
     }
   }
 
   void _onDestinationSelected(int index) {
-    _pageController?.animateToPage(
+    final controller = _pageController;
+    if (controller == null) return;
+    final current = controller.hasClients
+        ? (controller.page ?? _currentIndex.toDouble()).round()
+        : _currentIndex;
+    // Tab yang tidak bersebelahan (mis. Home ke Aktivitas) dilompati langsung: geser animasi akan
+    // menyapu semua layar di antaranya. Layar tujuan tetap masuk dengan fade dari _onPageChanged.
+    // Bila animasi dimatikan di sistem, selalu lompat langsung.
+    if ((index - current).abs() > 1 || MediaQuery.disableAnimationsOf(context)) {
+      controller.jumpToPage(index);
+      return;
+    }
+    controller.animateToPage(
       index,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
     );
   }
 
-  static bool _showPatroliMenu(User? user) {
-    if (user == null) return false;
-    final positionName = user.position?.name;
-    if (positionName == null || positionName.trim().isEmpty) return false;
-    final lower = positionName.toLowerCase();
-    // Patroli hanya untuk posisi security (bukan mengikuti flag checkpoint site).
-    return lower.contains('security') ||
-        lower.contains('satpam') ||
-        lower.contains('guard') ||
-        lower.contains('penjaga') ||
-        lower.contains('patrol');
-  }
+  static bool _showPatroliMenu(User? user) => isSecurityPosition(user);
 
   void _bootstrapCheckpointForUser(User? user) {
     final userId = user?.id;
@@ -299,14 +305,62 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
+  /// Petugas security: unduh paket Patroli QR dan kirim antrean scan sejak app dibuka, supaya patroli
+  /// tetap jalan bila nanti sinyal hilang sebelum menu Patroli sempat dibuka.
+  void _bootstrapPatrolForUser(User? user, bool isSecurity) {
+    final userId = user?.id;
+    if (userId == null) {
+      if (_lastPatrolUserId != null) {
+        _lastPatrolUserId = null;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Provider.of<PatrolProvider>(context, listen: false).clear();
+        });
+      }
+      return;
+    }
+    if (!isSecurity || _lastPatrolUserId == userId) return;
+    _lastPatrolUserId = userId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Provider.of<PatrolProvider>(context, listen: false).ensureUser(userId);
+    });
+  }
+
+  // Auto-refresh hanya selama app terlihat. Timer Dart tetap jalan saat app di
+  // background (proses dijaga hidup oleh foreground service tracking), dulu ini
+  // bikin tiap HP nembak 4 request/45 detik sepanjang shift walau layar mati.
+  bool get _isAppInForeground {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed;
+  }
+
   void _ensureHomeAutoRefresh() {
-    if (_homeAutoRefreshTimer != null) {
+    if (_homeAutoRefreshTimer != null || !_isAppInForeground) {
       return;
     }
     _homeAutoRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
-      if (!mounted || _currentIndex != 0) return;
+      if (!mounted || _currentIndex != 0 || !_isAppInForeground) return;
       _refreshHomeData();
     });
+  }
+
+  void _stopHomeAutoRefresh() {
+    _homeAutoRefreshTimer?.cancel();
+    _homeAutoRefreshTimer = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (_currentIndex == 0) {
+        // Throttle 15 detik di _refreshHomeData mencegah burst saat bolak-balik app.
+        _refreshHomeData();
+        _ensureHomeAutoRefresh();
+      }
+    } else {
+      _stopHomeAutoRefresh();
+    }
   }
 
   Future<void> _refreshHomeData({bool force = false}) async {
@@ -377,6 +431,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final user = authProvider.user;
         _bootstrapCheckpointForUser(user);
         final showPatroli = _showPatroliMenu(user);
+        _bootstrapPatrolForUser(user, showPatroli);
 
         final screens = _getScreens(showPatroli);
         final navItems = _getMainNavItems();
