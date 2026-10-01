@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:geolocator/geolocator.dart' as geolocator;
 import '../models/user_model.dart';
 import '../services/persistent_notification_service.dart';
 import 'api_service.dart';
+import 'tracking_state_service.dart';
 
 // Area monitoring settings
 class AreaMonitoringSettings {
@@ -179,12 +181,15 @@ class RealtimeLocationService {
     if (permission == geolocator.LocationPermission.denied ||
         permission == geolocator.LocationPermission.deniedForever) {
       debugPrint('[RealtimeLocationService] Location permission denied');
+      // Belum benar-benar melacak: biarkan syncRealtimeTracking mencoba lagi nanti
+      _isTracking = false;
       return;
     }
 
     final serviceEnabled = await geolocator.Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       debugPrint('[RealtimeLocationService] Location service not enabled');
+      _isTracking = false;
       return;
     }
 
@@ -414,10 +419,28 @@ class RealtimeLocationService {
       };
 
       latestPosition.value = position;
+      // Layanan latar belakang yang mengirim titik rute selama check-in. Aplikasi hanya mengirim
+      // kalau layanan itu tidak berjalan, supaya tidak ada titik ganda atau rute yang melompat balik.
+      try {
+        if (await FlutterBackgroundService().isRunning()) {
+          return true;
+        }
+      } catch (_) {}
       final response = await ApiService().post('/api/supervisor/attendance/realtime/log', data: locationData);
 
       if (response.statusCode == 200) {
+        // Layanan latar belakang membaca penanda ini supaya tidak mengirim titik ganda
+        await TrackingStateService.markLocationSent(DateTime.now());
         return true;
+      } else if (response.statusCode == 404 || response.statusCode == 409) {
+        // Sesi sudah selesai di server: jangan terus mengirim sampai aplikasi memuat ulang data absen
+        debugPrint('[RealtimeLocationService] Session ended on server (${response.statusCode})');
+        final endedId = _currentAttendanceId;
+        if (endedId != null) {
+          await TrackingStateService.markAttendanceEnded(endedId);
+        }
+        await stopRealtimeTracking();
+        return false;
       } else if (response.statusCode == 403) {
         debugPrint('[RealtimeLocationService] ⚠️ Session expired (403)');
         return false;

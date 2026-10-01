@@ -1,3 +1,6 @@
+# Claude Code context file — local only, jangan commit (berisi info internal project)
+CLAUDE.md
+
 # Miscellaneous
 *.class
 *.log

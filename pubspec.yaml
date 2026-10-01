@@ -25,7 +25,12 @@ dependencies:
   
   # Local Storage
   shared_preferences: ^2.2.2
-  
+  # Sudah terpasang sebagai dependensi turunan; dipakai langsung untuk foto antrean offline
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  # Status pelacakan dibaca bersama aplikasi dan layanan latar belakang (tanpa cache)
+  shared_preferences_android: ^2.4.18
+
   # Connectivity
   connectivity_plus: ^6.0.5
   
@@ -68,6 +73,11 @@ dependencies:
   flutter_background_service: ^5.1.0
   flutter_background_service_android: ^6.3.1
   google_maps_flutter: ^2.14.0
+
+  # Patroli QR: pemindai stiker (ML Kit bawaan APK, jalan tanpa Google Play Services) dan hash token
+  # Plugin native: perlu rilis APK penuh, tidak bisa lewat patch Shorebird
+  mobile_scanner: ^7.4.2
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

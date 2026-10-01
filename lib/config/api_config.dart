@@ -44,6 +44,9 @@ class ApiConfig {
   static const String attendance = '/api/ess/attendance';
   static const String checkIn = '/api/ess/attendance/check-in';
   static const String checkOut = '/api/ess/attendance/check-out';
+  // Absen dengan QR berganti dari layar absen (isi QR + GPS, tanpa foto)
+  static const String checkInQr = '/api/ess/attendance/check-in-qr';
+  static const String checkOutQr = '/api/ess/attendance/check-out-qr';
   static const String attendanceSessionCurrent =
       '/api/ess/attendance/session/current';
   static const String attendanceBreakStatus =
@@ -82,6 +85,13 @@ class ApiConfig {
   static const String essCheckpointComplete =
       '/api/ess/activity/checkpoint-complete';
   static const String essSiteFlags = '/api/ess/site-flags';
+  // Manual book PDF per role (karyawan = panduan Atenim)
+  static String manual(String slug) => '/api/manual/$slug';
+
+  // Patroli QR: paket titik & ronde (dipakai offline), sinkron antrean scan, unggah foto scan
+  static const String essPatrolPack = '/api/ess/patrol/pack';
+  static const String essPatrolSync = '/api/ess/patrol/sync';
+  static const String essPatrolPhoto = '/api/ess/patrol/photo';
   static const String essPayrollSlips = '/api/ess/payroll-slips';
   static String essPayrollSlipPdf(String id) =>
       '/api/ess/payroll-slips/$id/pdf';

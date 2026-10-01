@@ -1,6 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
+import 'dart:io';
 
 /// Service untuk menyimpan dan mengambil data offline
 class OfflineStorageService {
@@ -14,6 +17,7 @@ class OfflineStorageService {
   static const String _pendingPatroliKey = 'pending_patroli';
   static const String _pendingRequestsKey = 'pending_requests';
   static const String _pendingLocationLogsKey = 'pending_location_logs';
+  static const int _maxPendingLocationLogs = 500;
 
   /// Simpan attendance data
   Future<void> saveAttendance(Map<String, dynamic> data) async {
@@ -348,11 +352,27 @@ class OfflineStorageService {
         ...data,
         'timestamp': DateTime.now().toIso8601String(),
       });
+      // Batasi antrean (500 titik = ~40 jam pada interval 5 menit): yang paling lama dibuang
+      if (pending.length > _maxPendingLocationLogs) {
+        pending.removeRange(0, pending.length - _maxPendingLocationLogs);
+      }
       await prefs.setString(_pendingLocationLogsKey, jsonEncode(pending));
       debugPrint('[OfflineStorage] Pending location log saved');
     } catch (e) {
       debugPrint('[OfflineStorage] Error saving pending location log: $e');
     }
+  }
+
+  /// Jumlah laporan yang masih tertahan di HP (absen, aktivitas, patroli).
+  /// Dipakai untuk memperingatkan sebelum logout, karena logout menghapusnya.
+  Future<int> countUnsentReports() async {
+    final lists = await Future.wait([
+      getPendingCheckIns(),
+      getPendingCheckOuts(),
+      getPendingActivities(),
+      getPendingPatroli(),
+    ]);
+    return lists.fold<int>(0, (total, list) => total + list.length);
   }
 
   /// Ambil semua pending location logs
@@ -400,6 +420,9 @@ class OfflineStorageService {
       await prefs.remove(_pendingPatroliKey);
       await prefs.remove(_pendingRequestsKey);
       await prefs.remove(_pendingLocationLogsKey);
+      // Salinan foto antrean (lihat ActivityProvider._persistPendingPhotos)
+      final photoDir = Directory(p.join((await getApplicationDocumentsDirectory()).path, 'pending_photos'));
+      if (await photoDir.exists()) await photoDir.delete(recursive: true);
       debugPrint('[OfflineStorage] All offline data cleared');
     } catch (e) {
       debugPrint('[OfflineStorage] Error clearing data: $e');

@@ -513,6 +513,7 @@ class AttendanceService {
           'intervalSeconds': 60, // 1 minute default
           'isEnabled': false,
         },
+        'isFallback': true, // jangan di-cache, supaya request berikutnya coba server lagi
       };
     }
   }
@@ -825,6 +826,61 @@ class AttendanceService {
       debugPrint('[AttendanceService] ✗ Check-out exception: $e');
       debugPrint('[AttendanceService] User-friendly error: $errorMsg');
       return {'success': false, 'message': errorMsg};
+    }
+  }
+
+  /// QR absen aktif di site karyawan bila supervisor sudah memasang layar absen.
+  Future<bool> isQrAttendanceEnabled() async {
+    try {
+      final response = await _apiService.get(ApiConfig.essSiteFlags);
+      final body = response.data;
+      if (response.statusCode == 200 && body is Map && body['data'] is Map) {
+        return body['data']['qrAttendanceEnabled'] == true;
+      }
+    } catch (e) {
+      debugPrint('[AttendanceService] Gagal memuat status QR absen: $e');
+    }
+    return false;
+  }
+
+  /// Absen dengan QR dari layar absen. Server memeriksa QR (berganti tiap 30 detik) dan lokasi GPS.
+  /// Hasil: success, message, dan reason dari server (expired/signature/format) bila QR ditolak.
+  Future<Map<String, dynamic>> submitQrAttendance({
+    required bool checkOut,
+    required String qrData,
+    required double latitude,
+    required double longitude,
+    String? shiftId,
+  }) async {
+    final endpoint = checkOut ? ApiConfig.checkOutQr : ApiConfig.checkInQr;
+    try {
+      final response = await _apiService
+          .post(
+            endpoint,
+            data: {
+              'qrData': qrData,
+              'latitude': latitude,
+              'longitude': longitude,
+              if (checkOut && shiftId != null) 'shiftId': shiftId,
+            },
+          )
+          .timeout(const Duration(seconds: 30));
+      final body = response.data;
+      final message = body is Map ? body['message']?.toString() : null;
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {
+          'success': true,
+          'message': message ?? (checkOut ? 'Check-out berhasil' : 'Check-in berhasil'),
+        };
+      }
+      return {
+        'success': false,
+        'status': response.statusCode,
+        'reason': body is Map ? body['reason']?.toString() : null,
+        'message': message ?? (checkOut ? 'Check-out gagal' : 'Check-in gagal'),
+      };
+    } catch (e) {
+      return {'success': false, 'message': ErrorHandler.getErrorMessage(e)};
     }
   }
 }

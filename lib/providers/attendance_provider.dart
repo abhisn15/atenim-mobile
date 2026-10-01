@@ -6,6 +6,7 @@ import '../services/attendance_service.dart';
 import '../services/realtime_location_service.dart';
 import '../services/offline_storage_service.dart';
 import '../services/background_tracking_service.dart';
+import '../services/tracking_state_service.dart';
 import '../services/persistent_notification_service.dart';
 import '../services/auth_service.dart';
 import '../utils/error_handler.dart';
@@ -27,10 +28,9 @@ class AttendanceProvider with ChangeNotifier {
   bool _breakActionInProgress = false;
 
   // Flags to prevent double initialization
-  bool _backgroundTrackingInitialized = false;
   bool _realtimeTrackingInitialized = false;
   bool _trackingEnabledByPolicy = false;
-  int _trackingIntervalSeconds = 60;
+  int _trackingIntervalSeconds = TrackingStateService.defaultIntervalSeconds;
 
   // Callback setelah checkout sukses (untuk rating popup, dll)
   void Function()? _onCheckoutSuccessCallback;
@@ -220,8 +220,14 @@ class AttendanceProvider with ChangeNotifier {
 
     final trackingSettings = await _getEffectiveTrackingSettings();
     final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
+    // Pengaturan tidak terbaca (tanpa sinyal dan belum ada cache): jangan hentikan
+    // pelacakan yang sedang jalan, justru di area tanpa sinyal rute perlu tetap terekam.
+    final isKnown = trackingSettings['isKnown'] as bool? ?? false;
+    final disabledByServer = isKnown && !isEnabled;
+    final sessionEnded =
+        hasActiveAttendance && await _isEndedAttendance(today.id);
 
-    if (!isEnabled || !hasActiveAttendance) {
+    if (disabledByServer || sessionEnded || !hasActiveAttendance) {
       if (_realtimeService.isTracking) {
         try {
           await _realtimeService.stopRealtimeTracking();
@@ -232,18 +238,24 @@ class AttendanceProvider with ChangeNotifier {
         }
       }
 
-      try {
-        await BackgroundTrackingService.stop();
-      } catch (e) {
-        debugPrint(
-          '[AttendanceProvider] Failed to stop background tracking during policy enforce: $e',
-        );
+      // Layanan latar belakang hanya dimatikan kalau monitoring dinonaktifkan atau sesinya
+      // sudah selesai. Kalau data absen di HP sekadar tidak memuat sesi aktif (mis. rentang
+      // tanggal mulai tanggal 1 memotong shift malam), layanan tetap jalan dan berhenti
+      // sendiri begitu server menyatakan sesi selesai; check-out dan logout menghentikannya langsung.
+      if (disabledByServer || sessionEnded) {
+        try {
+          await TrackingStateService.clearTrackingState();
+          await BackgroundTrackingService.stop();
+        } catch (e) {
+          debugPrint(
+            '[AttendanceProvider] Failed to stop background tracking during policy enforce: $e',
+          );
+        }
       }
 
       _realtimeTrackingInitialized = false;
-      _backgroundTrackingInitialized = false;
 
-      if (!isEnabled) {
+      if (disabledByServer) {
         debugPrint(
           '[AttendanceProvider] Tracking policy: disabled by site/global feature flags',
         );
@@ -268,6 +280,10 @@ class AttendanceProvider with ChangeNotifier {
       return;
     }
 
+    if (await _isEndedAttendance(today.id)) {
+      return;
+    }
+
     User? user;
     try {
       user = await _authService.getCurrentUser();
@@ -287,7 +303,8 @@ class AttendanceProvider with ChangeNotifier {
     }
 
     final trackingSettings = await _getEffectiveTrackingSettings();
-    final intervalSeconds = trackingSettings['intervalSeconds'] as int? ?? 60;
+    final intervalSeconds = trackingSettings['intervalSeconds'] as int? ??
+        TrackingStateService.defaultIntervalSeconds;
     final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
 
     if (!isEnabled) {
@@ -520,17 +537,69 @@ class AttendanceProvider with ChangeNotifier {
     return null;
   }
 
-  Future<Map<String, dynamic>> getLocationSettings() async {
-    return await _attendanceService.getLocationSettings();
+  // Setting lokasi jarang berubah, tapi dulu diambil 1-3x setiap loadAttendance
+  // (enforce policy, realtime, background) -> ~18 ribu request/hari di prod.
+  static const Duration _locationSettingsTtl = Duration(minutes: 5);
+  Map<String, dynamic>? _locationSettingsCache;
+  String? _locationSettingsCacheUserId;
+  DateTime? _locationSettingsCachedAt;
+  Future<Map<String, dynamic>>? _locationSettingsInFlight;
+
+  Future<Map<String, dynamic>> getLocationSettings({
+    bool forceRefresh = false,
+  }) async {
+    final userId = (await _authService.getCachedUserOnly())?.id;
+    final cachedAt = _locationSettingsCachedAt;
+    if (!forceRefresh &&
+        _locationSettingsCache != null &&
+        cachedAt != null &&
+        _locationSettingsCacheUserId == userId &&
+        DateTime.now().difference(cachedAt) < _locationSettingsTtl) {
+      return _locationSettingsCache!;
+    }
+
+    final inFlight = _locationSettingsInFlight;
+    if (inFlight != null) return inFlight;
+
+    final request = _attendanceService.getLocationSettings();
+    _locationSettingsInFlight = request;
+    try {
+      final result = await request;
+      if (result['isFallback'] == true &&
+          _locationSettingsCache != null &&
+          _locationSettingsCacheUserId == userId) {
+        // Tanpa sinyal: pakai pengaturan terakhir yang berhasil dimuat
+        return _locationSettingsCache!;
+      }
+      // Cache hanya respons sukses: bukan fallback klien, bukan respons error server.
+      if (result['isFallback'] != true &&
+          result['message'] == null &&
+          result['data'] is Map) {
+        _locationSettingsCache = result;
+        _locationSettingsCacheUserId = userId;
+        _locationSettingsCachedAt = DateTime.now();
+      }
+      return result;
+    } finally {
+      _locationSettingsInFlight = null;
+    }
   }
 
-  Future<Map<String, dynamic>> _getEffectiveTrackingSettings() async {
-    int intervalSeconds = 60;
+  Future<Map<String, dynamic>> _getEffectiveTrackingSettings({
+    bool forceRefresh = false,
+  }) async {
+    int intervalSeconds = TrackingStateService.defaultIntervalSeconds;
     bool isEnabled = false;
+    bool isKnown = false;
 
     try {
-      final locationSettings = await getLocationSettings();
+      final locationSettings = await getLocationSettings(
+        forceRefresh: forceRefresh,
+      );
       final settingsData = locationSettings['data'];
+      isKnown = locationSettings['isFallback'] != true &&
+          locationSettings['message'] == null &&
+          settingsData is Map;
       if (settingsData is Map) {
         final intervalRaw = settingsData['intervalSeconds'];
         final enabledRaw = settingsData['isEnabled'];
@@ -557,7 +626,11 @@ class AttendanceProvider with ChangeNotifier {
       notifyListeners();
     }
 
-    return {'intervalSeconds': intervalSeconds, 'isEnabled': isEnabled};
+    return {
+      'intervalSeconds': intervalSeconds,
+      'isEnabled': isEnabled,
+      'isKnown': isKnown,
+    };
   }
 
   Future<bool> checkIn({
@@ -643,6 +716,9 @@ class AttendanceProvider with ChangeNotifier {
               }
             }
             bool trackingStarted = false;
+            bool checkInTrackingEnabled = false;
+            int checkInIntervalSeconds =
+                TrackingStateService.defaultIntervalSeconds;
             final startDate = DateTime(now.year, now.month, 1);
             await loadAttendance(
               startDate: startDate,
@@ -661,10 +737,16 @@ class AttendanceProvider with ChangeNotifier {
                 '[AttendanceProvider] Starting realtime location tracking...',
               );
 
-              final trackingSettings = await _getEffectiveTrackingSettings();
+              // Saat check-in selalu ambil setting terbaru dari server.
+              final trackingSettings = await _getEffectiveTrackingSettings(
+                forceRefresh: true,
+              );
               final intervalSeconds =
-                  trackingSettings['intervalSeconds'] as int? ?? 60;
+                  trackingSettings['intervalSeconds'] as int? ??
+                  TrackingStateService.defaultIntervalSeconds;
               final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
+              checkInTrackingEnabled = isEnabled;
+              checkInIntervalSeconds = intervalSeconds;
 
               debugPrint(
                 '[AttendanceProvider] Effective tracking settings: interval=$intervalSeconds, enabled=$isEnabled',
@@ -753,9 +835,21 @@ class AttendanceProvider with ChangeNotifier {
               debugPrint('[AttendanceProvider] Stack trace: ${e.toString()}');
             }
 
-            // Pastikan background tracking service juga running
+            // Pastikan background tracking service juga running. Pakai ID absen dari respons
+            // check-in, tidak menunggu muat ulang data absen (yang bisa gagal atau tertahan).
             try {
-              await ensureBackgroundTracking();
+              if (checkInTrackingEnabled &&
+                  user != null &&
+                  responseAttendanceId != null) {
+                await _runBackgroundTracking(
+                  userId: user.id,
+                  attendanceId: responseAttendanceId,
+                  checkInDate: responseCheckInDate ?? now,
+                  intervalSeconds: checkInIntervalSeconds,
+                );
+              } else {
+                await ensureBackgroundTracking();
+              }
             } catch (e) {
               debugPrint(
                 '[AttendanceProvider] Failed to ensure background tracking after check-in: $e',
@@ -884,6 +978,78 @@ class AttendanceProvider with ChangeNotifier {
     }
   }
 
+  bool _qrAttendanceEnabled = false;
+
+  /// QR absen tersedia di site karyawan (supervisor sudah memasang layar absen).
+  bool get qrAttendanceEnabled => _qrAttendanceEnabled;
+
+  Future<void> loadQrAttendanceFlag() async {
+    final enabled = await _attendanceService.isQrAttendanceEnabled();
+    if (enabled != _qrAttendanceEnabled) {
+      _qrAttendanceEnabled = enabled;
+      notifyListeners();
+    }
+  }
+
+  /// Absen dengan QR dari layar absen: ambil GPS, kirim isi QR, lalu muat ulang absen hari ini.
+  /// Tidak disimpan offline: QR hanya berlaku sekitar satu menit, jadi antrean offline pasti ditolak.
+  Future<Map<String, dynamic>> submitQrAttendance({
+    required bool checkOut,
+    required String qrData,
+  }) async {
+    if (_checkInInProgress || _checkOutInProgress) {
+      return {'success': false, 'message': 'Absen sedang diproses. Tunggu sebentar.'};
+    }
+    if (checkOut) {
+      _checkOutInProgress = true;
+    } else {
+      _checkInInProgress = true;
+    }
+    _error = null;
+    notifyListeners();
+    try {
+      final location = await _attendanceService.getRequiredLocation(
+        actionLabel: checkOut ? 'check-out' : 'check-in',
+      );
+      final result = await _attendanceService.submitQrAttendance(
+        checkOut: checkOut,
+        qrData: qrData,
+        latitude: location['latitude']!,
+        longitude: location['longitude']!,
+        shiftId: checkOut ? todayAttendance?.shiftId : null,
+      );
+      if (result['success'] != true) return result;
+
+      if (checkOut) {
+        await _stopTrackingForQueuedCheckout();
+      }
+      final now = DateTime.now();
+      await loadAttendance(
+        startDate: DateTime(now.year, now.month, 1),
+        endDate: now,
+        forceRefresh: true,
+      );
+      if (!checkOut) {
+        try {
+          await ensureBackgroundTracking();
+          if (todayAttendance != null) {
+            await PersistentNotificationService.showCheckInNotification(todayAttendance!);
+            PersistentNotificationService.startPeriodicUpdates(todayAttendance!);
+          }
+        } catch (e) {
+          debugPrint('[AttendanceProvider] Tracking setelah check-in QR gagal: $e');
+        }
+      }
+      return result;
+    } catch (e) {
+      return {'success': false, 'message': ErrorHandler.getErrorMessage(e)};
+    } finally {
+      _checkInInProgress = false;
+      _checkOutInProgress = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> checkOut({
     required File photo,
     String? shiftId,
@@ -964,6 +1130,21 @@ class AttendanceProvider with ChangeNotifier {
               // Don't fail check-out just because tracking stop failed
             }
 
+            // Rute berhenti tepat saat check-out, termasuk layanan latar belakang. Sesi ditandai
+            // selesai supaya muat ulang yang gagal (cache lama) tidak menyalakannya lagi.
+            try {
+              final endedId = todayAttendance?.id;
+              if (endedId != null && endedId.isNotEmpty) {
+                await TrackingStateService.markAttendanceEnded(endedId);
+              }
+              await TrackingStateService.clearTrackingState();
+              await BackgroundTrackingService.stop();
+            } catch (e) {
+              debugPrint(
+                '[AttendanceProvider] Failed to stop background tracking after check-out: $e',
+              );
+            }
+
             // Hide persistent notification after successful check-out
             try {
               await PersistentNotificationService.hideCheckInNotification();
@@ -978,7 +1159,6 @@ class AttendanceProvider with ChangeNotifier {
             }
 
             // Reset initialization flags for next check-in
-            _backgroundTrackingInitialized = false;
             _realtimeTrackingInitialized = false;
 
             // Load attendance dengan forceRefresh untuk mendapatkan data terbaru
@@ -1052,6 +1232,7 @@ class AttendanceProvider with ChangeNotifier {
             });
             _error = 'Check-out disimpan untuk sync nanti';
             debugPrint('[AttendanceProvider] ✓ Check-out saved to pending');
+            await _stopTrackingForQueuedCheckout();
             return true;
           } catch (saveError) {
             debugPrint(
@@ -1098,6 +1279,7 @@ class AttendanceProvider with ChangeNotifier {
         });
         _error = 'Mode offline - Check-out akan disinkronkan saat online';
         debugPrint('[AttendanceProvider] ✓ Check-out saved to pending');
+        await _stopTrackingForQueuedCheckout();
         return true;
       }
     } catch (e) {
@@ -1400,7 +1582,8 @@ class AttendanceProvider with ChangeNotifier {
           );
           final trackingSettings = await _getEffectiveTrackingSettings();
           final intervalSeconds =
-              trackingSettings['intervalSeconds'] as int? ?? 300;
+              trackingSettings['intervalSeconds'] as int? ??
+              TrackingStateService.defaultIntervalSeconds;
           final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
 
           if (!isEnabled) {
@@ -1444,6 +1627,10 @@ class AttendanceProvider with ChangeNotifier {
       return;
     }
 
+    if (await _isEndedAttendance(today.id)) {
+      return;
+    }
+
     final user = await _authService.getCurrentUser();
     if (user == null) {
       return;
@@ -1457,7 +1644,8 @@ class AttendanceProvider with ChangeNotifier {
     }
 
     final trackingSettings = await _getEffectiveTrackingSettings();
-    final intervalSeconds = trackingSettings['intervalSeconds'] as int? ?? 60;
+    final intervalSeconds = trackingSettings['intervalSeconds'] as int? ??
+        TrackingStateService.defaultIntervalSeconds;
     final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
 
     if (!isEnabled) {
@@ -1486,15 +1674,10 @@ class AttendanceProvider with ChangeNotifier {
     }
   }
 
-  /// Pastikan background service tetap running untuk location tracking
+  /// Pastikan background service tetap running untuk location tracking.
+  /// Layanan ini yang mengirim titik rute tiap interval selama check-in, juga saat
+  /// aplikasi ditutup, dan berhenti sendiri kalau state dihapus (check-out/logout).
   Future<void> ensureBackgroundTracking() async {
-    if (_backgroundTrackingInitialized) {
-      debugPrint(
-        '[AttendanceProvider] Background tracking already initialized, skipping',
-      );
-      return;
-    }
-
     final today = todayAttendance;
     if (today == null || today.checkIn == null || today.checkOut != null) {
       debugPrint(
@@ -1503,30 +1686,117 @@ class AttendanceProvider with ChangeNotifier {
       return;
     }
 
+    // Check-in offline yang belum tersinkron belum punya ID dari server
+    if (today.id.isEmpty || today.id.startsWith('temp-')) {
+      debugPrint(
+        '[AttendanceProvider] Background tracking waits for synced attendance id',
+      );
+      return;
+    }
+
+    if (await _isEndedAttendance(today.id)) {
+      debugPrint(
+        '[AttendanceProvider] Background tracking skipped: session already ended',
+      );
+      return;
+    }
+
     final trackingSettings = await _getEffectiveTrackingSettings();
     final isEnabled = trackingSettings['isEnabled'] as bool? ?? false;
+    final isKnown = trackingSettings['isKnown'] as bool? ?? false;
+    final intervalSeconds = trackingSettings['intervalSeconds'] as int? ??
+        TrackingStateService.defaultIntervalSeconds;
+    if (!isKnown) {
+      // Tanpa sinyal: layanan yang sudah jalan tetap melacak dengan state terakhir
+      return;
+    }
     if (!isEnabled) {
       debugPrint(
         '[AttendanceProvider] Background tracking skipped: disabled by site/global settings',
       );
-      _backgroundTrackingInitialized = false;
       return;
     }
 
+    User? user;
     try {
-      debugPrint(
-        '[AttendanceProvider] Starting background tracking service...',
-      );
+      user = await _authService.getCurrentUser();
+    } catch (_) {
+      user = null;
+    }
+    if (user == null) {
+      debugPrint('[AttendanceProvider] Background tracking skipped: user null');
+      return;
+    }
+
+    await _runBackgroundTracking(
+      userId: user.id,
+      attendanceId: today.id,
+      checkInDate: DateTime.tryParse(today.date) ?? DateTime.now(),
+      intervalSeconds: intervalSeconds,
+    );
+  }
+
+  /// Simpan state yang dibaca layanan latar belakang lalu pastikan layanannya berjalan.
+  Future<void> _runBackgroundTracking({
+    required String userId,
+    required String attendanceId,
+    required DateTime checkInDate,
+    required int intervalSeconds,
+  }) async {
+    try {
+      final existing = await TrackingStateService.getTrackingState();
+      if (existing == null ||
+          existing.userId != userId ||
+          existing.attendanceId != attendanceId ||
+          existing.intervalSeconds != intervalSeconds) {
+        await TrackingStateService.saveTrackingState(
+          TrackingState(
+            userId: userId,
+            attendanceId: attendanceId,
+            checkInDate: checkInDate,
+            intervalSeconds: intervalSeconds,
+          ),
+        );
+      }
       await BackgroundTrackingService.ensureRunning();
-      debugPrint('[AttendanceProvider] Background tracking service started');
-      _backgroundTrackingInitialized = true;
       debugPrint(
-        '[AttendanceProvider] Background tracking service initialized',
+        '[AttendanceProvider] Background tracking running (interval ${intervalSeconds}s)',
       );
     } catch (e) {
       debugPrint(
         '[AttendanceProvider] Failed to ensure background tracking: $e',
       );
     }
+  }
+
+  Future<bool> _isEndedAttendance(String attendanceId) async {
+    try {
+      return await TrackingStateService.getEndedAttendanceId() == attendanceId;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Check-out yang masih antre (offline) tetap berarti karyawan sudah pulang:
+  /// hentikan rute sekarang juga, jangan menunggu check-out tersinkron.
+  Future<void> _stopTrackingForQueuedCheckout() async {
+    final endedId = todayAttendance?.id;
+    try {
+      if (endedId != null && endedId.isNotEmpty) {
+        await TrackingStateService.markAttendanceEnded(endedId);
+      }
+      await _realtimeService.stopRealtimeTracking();
+      await TrackingStateService.clearTrackingState();
+      await BackgroundTrackingService.stop();
+      _realtimeTrackingInitialized = false;
+    } catch (e) {
+      debugPrint(
+        '[AttendanceProvider] Failed to stop tracking after queued check-out: $e',
+      );
+    }
+    try {
+      await PersistentNotificationService.hideCheckInNotification();
+      PersistentNotificationService.stopPeriodicUpdates();
+    } catch (_) {}
   }
 }

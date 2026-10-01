@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'dart:io';
 import 'package:geolocator/geolocator.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import '../models/activity_model.dart';
 import '../services/activity_service.dart';
 import '../services/offline_storage_service.dart';
@@ -10,6 +12,7 @@ import '../utils/error_handler.dart';
 import 'connectivity_provider.dart';
 
 class ActivityProvider with ChangeNotifier {
+  static const String _pendingPhotoDir = 'pending_photos';
   final ActivityService _activityService = ActivityService();
   final OfflineStorageService _offlineStorage = OfflineStorageService();
   final AuthService _authService = AuthService();
@@ -589,6 +592,7 @@ class ActivityProvider with ChangeNotifier {
         } else {
           await _offlineStorage.removePendingActivity(index);
         }
+            await _deletePendingPhotos(photoPaths);
             if (localId != null) {
               await _removeLocalActivity(localId);
             }
@@ -637,6 +641,46 @@ class ActivityProvider with ChangeNotifier {
     return Uri.file(path).toString();
   }
 
+  /// Kunci antrean untuk menahan tap dobel (detik yang sama), bukan laporan
+  /// berikutnya. Dulu tanpa waktu, jadi laporan kedua di lokasi yang sama
+  /// pada hari yang sama dibuang diam-diam selama HP masih offline.
+  String _buildPendingClientKey(String type, String summary, String date, int photoCount, DateTime now) {
+    final second = now.millisecondsSinceEpoch ~/ 1000;
+    return '${type.toLowerCase()}|${summary.trim()}|$date|$photoCount|$second';
+  }
+
+  /// Salin foto antrean ke folder dokumen aplikasi. Foto dari kamera ada di
+  /// folder cache yang bisa dibersihkan Android sebelum sinyal kembali, dan
+  /// laporan lalu terkirim tanpa foto. Kalau penyalinan gagal, path asli dipakai.
+  Future<List<String>> _persistPendingPhotos(List<File> photos, String localId) async {
+    if (photos.isEmpty) return [];
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, _pendingPhotoDir));
+      await dir.create(recursive: true);
+      final paths = <String>[];
+      for (var i = 0; i < photos.length; i++) {
+        final target = p.join(dir.path, '${localId}_$i${p.extension(photos[i].path)}');
+        paths.add((await photos[i].copy(target)).path);
+      }
+      return paths;
+    } catch (e) {
+      debugPrint('[ActivityProvider] Gagal menyalin foto antrean, pakai path asli: $e');
+      return photos.map((file) => file.path).toList();
+    }
+  }
+
+  /// Hapus salinan foto antrean setelah laporan berhasil terkirim.
+  Future<void> _deletePendingPhotos(List<String> paths) async {
+    for (final path in paths) {
+      if (!path.contains('${p.separator}$_pendingPhotoDir${p.separator}')) continue;
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+  }
+
   Future<void> _queueOfflineActivity({
     required String type,
     required String summary,
@@ -655,11 +699,11 @@ class ActivityProvider with ChangeNotifier {
   }) async {
     final now = DateTime.now();
     final localId = 'local-${now.millisecondsSinceEpoch}';
-    final photoPaths = photos.map((file) => file.path).toList();
-    final photoUrls = photos.map((file) => _toFileUrl(file.path)).toList();
+    final photoPaths = await _persistPendingPhotos(photos, localId);
+    final photoUrls = photoPaths.map(_toFileUrl).toList();
     final activityDate = date ?? _formatDateOnly(now);
     final user = await _authService.getCurrentUser();
-    final clientKey = '${type.toLowerCase()}|${summary.trim()}|$activityDate|${photoPaths.length}';
+    final clientKey = _buildPendingClientKey(type, summary, activityDate, photoPaths.length, now);
 
     // Gunakan penyimpanan terpisah berdasarkan tipe
     if (type == 'patroli') {
@@ -737,11 +781,11 @@ class ActivityProvider with ChangeNotifier {
   }) async {
     final now = DateTime.now();
     final localId = 'local-patroli-${now.millisecondsSinceEpoch}';
-    final photoPaths = photos.map((file) => file.path).toList();
-    final photoUrls = photos.map((file) => _toFileUrl(file.path)).toList();
+    final photoPaths = await _persistPendingPhotos(photos, localId);
+    final photoUrls = photoPaths.map(_toFileUrl).toList();
     final activityDate = date ?? _formatDateOnly(now);
     final user = await _authService.getCurrentUser();
-    final clientKey = 'patroli|${summary.trim()}|$activityDate|${photoPaths.length}';
+    final clientKey = _buildPendingClientKey('patroli', summary, activityDate, photoPaths.length, now);
 
     await _offlineStorage.savePendingPatroli({
       'type': 'patroli',

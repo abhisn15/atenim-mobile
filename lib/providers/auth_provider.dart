@@ -5,6 +5,7 @@ import '../models/user_model.dart';
 import '../models/version_model.dart';
 import '../services/auth_service.dart';
 import '../services/background_tracking_service.dart';
+import '../services/realtime_location_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/tracking_state_service.dart';
 import '../services/version_service.dart';
@@ -176,6 +177,9 @@ class AuthProvider with ChangeNotifier {
     // Stop all tracking services
     await TrackingStateService.clearTrackingState();
     await BackgroundTrackingService.stop();
+    try {
+      await RealtimeLocationService().stopRealtimeTracking();
+    } catch (_) {}
 
     // Hide check-in notification and stop periodic updates
     try {

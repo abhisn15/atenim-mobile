@@ -13,7 +13,16 @@ import 'api_service.dart';
 import 'offline_storage_service.dart';
 import 'tracking_state_service.dart';
 
-const double _movementThresholdMeters = 10.0;
+// Jadwal lokasi Android tidak presisi: titik boleh datang sedikit lebih awal dari interval.
+// Tanpa toleransi, titik yang datang di detik ke-298 dibuang dan interval efektif jadi 2x.
+const int _intervalToleranceSeconds = 20;
+// Kalau stream lokasi tidak memberi titik selama interval + batas ini, ambil posisi sendiri.
+// (Stream bisa berhenti diam-diam, mis. saat aplikasi di-swipe plugin lokasi ikut melepasnya.)
+const int _stallGraceSeconds = 10;
+// Titik pertama setelah check-in dikirim beberapa detik setelah layanan mulai.
+const int _firstPointDelaySeconds = 10;
+// Posisi terakhir dari sistem dianggap masih berlaku kalau umurnya paling lama ini.
+const int _freshPositionSeconds = 120;
 
 class BackgroundTrackingService {
   static const String _channelId = 'atenim_tracking';
@@ -62,22 +71,24 @@ Future<bool> _onIosBackground(ServiceInstance service) async {
 }
 
 geolocator.LocationSettings _buildLocationSettings(int intervalSeconds) {
-  final distanceFilter = _movementThresholdMeters.round();
   if (defaultTargetPlatform == TargetPlatform.android) {
-    // Nonaktifkan foreground notification karena background service sudah menanganinya
+    // distanceFilter 0: HP yang diam tetap memberi titik tiap interval, jadi peta tahu
+    // karyawan masih bertugas selama check-in.
     return geolocator.AndroidSettings(
       accuracy: geolocator.LocationAccuracy.high,
-      distanceFilter: distanceFilter,
+      distanceFilter: 0,
       intervalDuration: Duration(seconds: intervalSeconds),
       foregroundNotificationConfig: null, // Disabled - handled by background service
       forceLocationManager: false, // Use default provider
     );
   }
-  return geolocator.LocationSettings(
+  return const geolocator.LocationSettings(
     accuracy: geolocator.LocationAccuracy.high,
-    distanceFilter: distanceFilter,
+    distanceFilter: 0,
   );
 }
+
+enum _SendResult { sent, queued, sessionEnded, trackingDisabled }
 
 @pragma('vm:entry-point')
 void backgroundTrackingEntryPoint(ServiceInstance service) async {
@@ -116,69 +127,140 @@ void backgroundTrackingEntryPoint(ServiceInstance service) async {
   final offlineStorage = OfflineStorageService();
   StreamSubscription<geolocator.Position>? subscription;
   TrackingState? currentState;
-  geolocator.Position? lastSentPosition;
   DateTime? lastSentAt;
-  bool _isStopping = false; // Flag untuk mencegah race condition
+  DateTime? streamStartedAt;
+  DateTime? lastSyncAt;
+  bool isStopping = false; // Flag untuk mencegah race condition
+  bool isSending = false;
+  bool isShuttingDown = false;
 
   Future<void> stopStream() async {
-    if (_isStopping) {
+    if (isStopping) {
       debugPrint('[BackgroundTracking] ⚠️ Already stopping stream, skipping...');
       return;
     }
-    _isStopping = true;
+    isStopping = true;
     try {
       await subscription?.cancel();
       subscription = null;
-      lastSentPosition = null;
-      lastSentAt = null;
+      streamStartedAt = null;
     } catch (e) {
       debugPrint('[BackgroundTracking] ⚠️ Error stopping stream: $e');
     } finally {
-      _isStopping = false;
+      isStopping = false;
     }
   }
 
-  Future<void> sendLocation({
+  Future<void> shutdown(String reason) async {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    debugPrint('[BackgroundTracking] Stopping service: $reason');
+    await stopStream();
+    try {
+      service.stopSelf();
+    } catch (_) {}
+  }
+
+  Map<String, dynamic> buildPayload(TrackingState state, geolocator.Position position) {
+    return {
+      'userId': state.userId,
+      'attendanceId': state.attendanceId,
+      'date': state.checkInDate.toIso8601String().split('T')[0],
+      'latitude': position.latitude,
+      'longitude': position.longitude,
+      if (position.accuracy >= 0) 'accuracy': position.accuracy,
+      if (position.speed >= 0) 'speed': position.speed,
+      if (position.heading >= 0) 'heading': position.heading,
+      // Jam titik diambil (UTC), supaya titik dari antrean offline tetap di urutan yang benar
+      'capturedAt': position.timestamp.toUtc().toIso8601String(),
+    };
+  }
+
+  Future<_SendResult> sendLocation({
     required TrackingState state,
     required geolocator.Position position,
   }) async {
+    final payload = buildPayload(state, position);
     try {
-      final payload = {
-        'userId': state.userId,
-        'attendanceId': state.attendanceId,
-        'date': state.checkInDate.toIso8601String().split('T')[0],
-        'latitude': position.latitude,
-        'longitude': position.longitude,
-        if (position.accuracy >= 0) 'accuracy': position.accuracy,
-        if (position.speed >= 0) 'speed': position.speed,
-        if (position.heading >= 0) 'heading': position.heading,
-      };
-
       final response = await apiService.post(ApiConfig.realtimeLog, data: payload);
-      if (response.statusCode != 200) {
-        await offlineStorage.savePendingLocationLog({
-          ...payload,
-          'capturedAt': DateTime.now().toIso8601String(),
-        });
+      final status = response.statusCode ?? 0;
+      // Hanya respons JSON dari server MMS yang dipercaya; halaman error gateway (HTML) dianggap gangguan sementara
+      final data = response.data;
+      final fromServer = data is Map;
+      if (status == 200) {
+        // Monitoring dimatikan (per site atau global): berhenti sampai aplikasi mengaktifkan lagi
+        if (fromServer && (data['disabledBySite'] == true || data['trackingDisabled'] == true)) {
+          return _SendResult.trackingDisabled;
+        }
+        return _SendResult.sent;
       }
+      // Sesi sudah selesai di server (check-out dari perangkat lain/admin, lewat 24 jam, atau attendance hilang)
+      if (fromServer && (status == 404 || status == 409)) {
+        return _SendResult.sessionEnded;
+      }
+      // Ditolak permanen (payload tidak valid atau sesi milik user lain): tidak ada gunanya diantre
+      if (fromServer && (status == 400 || status == 403)) {
+        return _SendResult.sent;
+      }
+      await offlineStorage.savePendingLocationLog(payload);
+      return _SendResult.queued;
     } catch (e) {
-      await offlineStorage.savePendingLocationLog({
-        'userId': state.userId,
-        'attendanceId': state.attendanceId,
-        'date': state.checkInDate.toIso8601String().split('T')[0],
-        'latitude': position.latitude,
-        'longitude': position.longitude,
-        if (position.accuracy >= 0) 'accuracy': position.accuracy,
-        if (position.speed >= 0) 'speed': position.speed,
-        if (position.heading >= 0) 'heading': position.heading,
-        'capturedAt': DateTime.now().toIso8601String(),
-      });
+      // Tanpa sinyal: simpan dulu, dikirim saat sinyal kembali
+      await offlineStorage.savePendingLocationLog(payload);
+      return _SendResult.queued;
+    }
+  }
+
+  // Kirim kalau sudah waktunya. Aplikasi (saat terbuka) juga bisa mengirim titik;
+  // penanda bersama mencegah titik ganda dalam satu interval.
+  Future<void> maybeSend(geolocator.Position position) async {
+    final state = currentState;
+    if (state == null || isSending || isShuttingDown) return;
+
+    isSending = true;
+    try {
+      // Android sering mengulang posisi tersimpan (fix yang sama) saat stream dimulai lagi:
+      // abaikan fix yang tidak lebih baru dari titik terakhir yang terkirim. Dibandingkan antar
+      // jam fix, bukan dengan jam HP, supaya tetap benar walau jam HP salah setel.
+      final lastFix = await TrackingStateService.getLastFixTime();
+      if (lastFix != null && !position.timestamp.isAfter(lastFix)) {
+        return;
+      }
+
+      final now = DateTime.now();
+      final sharedLast = await TrackingStateService.getLastLocationSentAt();
+      DateTime? last = lastSentAt;
+      if (sharedLast != null && (last == null || sharedLast.isAfter(last))) {
+        last = sharedLast;
+      }
+      if (last != null &&
+          now.difference(last).inSeconds < state.intervalSeconds - _intervalToleranceSeconds) {
+        return;
+      }
+
+      final result = await sendLocation(state: state, position: position);
+      if (result == _SendResult.sessionEnded) {
+        // Tandai supaya aplikasi tidak menyalakan lagi pelacakan untuk sesi ini
+        await TrackingStateService.markAttendanceEnded(state.attendanceId);
+        await TrackingStateService.clearTrackingState();
+        await shutdown('sesi check-in sudah selesai di server');
+        return;
+      }
+      if (result == _SendResult.trackingDisabled) {
+        await TrackingStateService.clearTrackingState();
+        await shutdown('monitoring realtime dinonaktifkan');
+        return;
+      }
+      lastSentAt = now;
+      await TrackingStateService.markLocationSent(now, fixTime: position.timestamp);
+    } finally {
+      isSending = false;
     }
   }
 
   Future<void> startStream(TrackingState state) async {
     // Prevent race condition dengan menunggu stop selesai
-    if (_isStopping) {
+    if (isStopping) {
       debugPrint('[BackgroundTracking] ⚠️ Waiting for stream to stop...');
       await Future.delayed(const Duration(milliseconds: 500));
     }
@@ -187,52 +269,75 @@ void backgroundTrackingEntryPoint(ServiceInstance service) async {
     final permission = await geolocator.Geolocator.checkPermission();
     if (permission != geolocator.LocationPermission.always &&
         permission != geolocator.LocationPermission.whileInUse) {
+      debugPrint('[BackgroundTracking] Location permission not granted, stream not started');
       return;
     }
 
     final serviceEnabled = await geolocator.Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
+      debugPrint('[BackgroundTracking] Location service disabled, stream not started');
       return;
     }
 
+    streamStartedAt = DateTime.now();
     subscription = geolocator.Geolocator.getPositionStream(
       locationSettings: _buildLocationSettings(state.intervalSeconds),
-    ).listen((position) async {
-      final activeState = await TrackingStateService.getTrackingState();
-      if (activeState == null) {
-        debugPrint('[BackgroundTracking] No active tracking state, skipping...');
-        return;
+    ).listen(
+      (position) => maybeSend(position),
+      onError: (Object e) {
+        debugPrint('[BackgroundTracking] ⚠️ Position stream error: $e');
+      },
+    );
+  }
+
+  // Stream bisa diam (Doze, GPS sempat mati): ambil posisi sendiri kalau sudah lewat interval
+  // tanpa titik. Hanya dipakai sebagai cadangan karena getCurrentPosition lebih berat.
+  Future<void> checkStalled() async {
+    final state = currentState;
+    if (state == null || isSending || isShuttingDown) return;
+    if (subscription == null) {
+      await startStream(state);
+      return;
+    }
+    final sharedLast = await TrackingStateService.getLastLocationSentAt();
+    DateTime? reference = lastSentAt ?? sharedLast;
+    if (sharedLast != null && reference != null && sharedLast.isAfter(reference)) {
+      reference = sharedLast;
+    }
+    // Titik pertama sesi dikirim segera: Android baru memberi posisi dari stream setelah satu interval.
+    final threshold = reference == null ? _firstPointDelaySeconds : state.intervalSeconds + _stallGraceSeconds;
+    final since = reference ?? streamStartedAt;
+    if (since == null || DateTime.now().difference(since).inSeconds < threshold) {
+      return;
+    }
+    geolocator.Position? position;
+    // Posisi terakhir yang masih segar (dan bukan fix yang sudah terkirim) cukup, tanpa menyalakan GPS lagi
+    try {
+      final known = await geolocator.Geolocator.getLastKnownPosition();
+      final lastFix = await TrackingStateService.getLastFixTime();
+      if (known != null &&
+          DateTime.now().difference(known.timestamp).inSeconds.abs() <= _freshPositionSeconds &&
+          (lastFix == null || known.timestamp.isAfter(lastFix))) {
+        position = known;
       }
-
-      // Background service runs continuously when there's active attendance
-      // It will handle location tracking regardless of app foreground/background state
-      debugPrint('[BackgroundTracking] Background location update received');
-
-      final now = DateTime.now();
-      if (lastSentAt != null &&
-          now.difference(lastSentAt!).inSeconds < activeState.intervalSeconds) {
-        debugPrint('[BackgroundTracking] Too soon since last update (${now.difference(lastSentAt!).inSeconds}s < ${activeState.intervalSeconds}s)');
-        return;
-      }
-
-      if (lastSentPosition != null) {
-        final distance = geolocator.Geolocator.distanceBetween(
-          lastSentPosition!.latitude,
-          lastSentPosition!.longitude,
-          position.latitude,
-          position.longitude,
+    } catch (_) {}
+    if (position == null) {
+      try {
+        position = await geolocator.Geolocator.getCurrentPosition(
+          desiredAccuracy: geolocator.LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 30),
         );
-        if (distance < _movementThresholdMeters) {
-          debugPrint('[BackgroundTracking] Movement too small (${distance.toStringAsFixed(1)}m < ${_movementThresholdMeters}m)');
-          return;
-        }
+      } catch (e) {
+        debugPrint('[BackgroundTracking] ⚠️ getCurrentPosition failed: $e');
       }
-
-      debugPrint('[BackgroundTracking] Sending background location update...');
-      await sendLocation(state: activeState, position: position);
-      lastSentPosition = position;
-      lastSentAt = DateTime.now();
-    });
+    }
+    if (position != null) {
+      await maybeSend(position);
+      // Stream yang diam dinyalakan ulang supaya titik berikutnya kembali tepat tiap interval
+      if (!isShuttingDown && currentState != null) {
+        await startStream(currentState!);
+      }
+    }
   }
 
   Future<void> syncPendingLogs() async {
@@ -275,18 +380,29 @@ void backgroundTrackingEntryPoint(ServiceInstance service) async {
           },
         );
 
-        if (response.statusCode == 200) {
+        final status = response.statusCode ?? 0;
+        // 200 tersimpan; 400/403/404/409 dari server ditolak permanen (mis. titik setelah check-out,
+        // sesi user lain): buang supaya antrean tidak macet
+        final fromServer = response.data is Map;
+        if (status == 200 ||
+            (fromServer && (status == 400 || status == 403 || status == 404 || status == 409))) {
           await offlineStorage.removePendingLocationLog(i);
+        } else {
+          break;
         }
-      } catch (_) {}
+      } catch (_) {
+        // Masih tanpa sinyal: berhenti dulu, dicoba lagi di putaran berikutnya
+        break;
+      }
     }
   }
 
   Future<void> refreshTrackingState() async {
     final nextState = await TrackingStateService.getTrackingState();
     if (nextState == null) {
+      // Tanpa check-in aktif layanan tidak punya tugas (mis. dinyalakan ulang saat HP boot)
       currentState = null;
-      await stopStream();
+      await shutdown('tidak ada check-in aktif');
       return;
     }
 
@@ -294,17 +410,23 @@ void backgroundTrackingEntryPoint(ServiceInstance service) async {
         currentState!.attendanceId != nextState.attendanceId ||
         currentState!.intervalSeconds != nextState.intervalSeconds;
 
+    if (currentState != null && currentState!.attendanceId != nextState.attendanceId) {
+      lastSentAt = null;
+    }
     currentState = nextState;
-    if (shouldRestart) {
-      await startStream(nextState);
-    } else if (subscription == null) {
+    if (shouldRestart || subscription == null) {
       await startStream(nextState);
     }
   }
 
   service.on('stopService').listen((_) async {
     try {
+      isShuttingDown = true;
       await stopStream();
+      // Check-out/logout: kirim dulu titik yang masih antre supaya ujung rute sesi tidak hilang
+      try {
+        await syncPendingLogs().timeout(const Duration(seconds: 20));
+      } catch (_) {}
       // Small delay untuk memastikan semua operasi selesai sebelum stop
       await Future.delayed(const Duration(milliseconds: 100));
       service.stopSelf();
@@ -317,10 +439,32 @@ void backgroundTrackingEntryPoint(ServiceInstance service) async {
     }
   });
 
-  await refreshTrackingState();
-  await syncPendingLogs();
-  Timer.periodic(const Duration(seconds: 15), (_) async {
-    await refreshTrackingState();
-    await syncPendingLogs();
+  bool isTicking = false;
+  Future<void> tick() async {
+    if (isShuttingDown || isTicking) return;
+    isTicking = true;
+    try {
+      await refreshTrackingState();
+      if (isShuttingDown) return;
+      await checkStalled();
+      final now = DateTime.now();
+      if (lastSyncAt == null || now.difference(lastSyncAt!).inSeconds >= 60) {
+        lastSyncAt = now;
+        await syncPendingLogs();
+      }
+    } catch (e) {
+      debugPrint('[BackgroundTracking] ⚠️ Tick error: $e');
+    } finally {
+      isTicking = false;
+    }
+  }
+
+  await tick();
+  Timer.periodic(const Duration(seconds: 15), (timer) async {
+    if (isShuttingDown) {
+      timer.cancel();
+      return;
+    }
+    await tick();
   });
 }

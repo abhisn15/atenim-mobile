@@ -39,6 +39,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
     _endDate = now;
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       Provider.of<RequestProvider>(context, listen: false).loadRequests();
     });
   }

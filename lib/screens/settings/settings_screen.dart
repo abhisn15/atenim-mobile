@@ -8,6 +8,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/global_update_checker.dart';
 import '../profile/profile_screen.dart';
 import '../team/team_screen.dart';
+import 'app_guide_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -333,6 +334,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.tag,
             title: 'Versi Aplikasi',
             value: _packageInfo?.version ?? 'Loading...',
+          ),
+
+          const Divider(),
+
+          // Panduan (manual book PDF dari server, tersimpan di HP)
+          _buildSectionHeader('Bantuan'),
+          ListTile(
+            leading: const Icon(Icons.menu_book_outlined, color: Colors.blue),
+            title: const Text('Panduan Aplikasi'),
+            subtitle: const Text('Cara memakai Atenim, lengkap dengan gambar layar'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AppGuideScreen()),
+              );
+            },
           ),
 
           const Divider(),

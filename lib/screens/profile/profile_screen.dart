@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../screens/camera/camera_screen.dart';
 import '../../services/profile_service.dart';
+import '../../services/offline_storage_service.dart';
 import '../../services/team_service.dart';
 import '../../config/api_config.dart';
 import '../../models/user_model.dart';
@@ -389,7 +390,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _handleLogout() async {
     // Get AuthProvider before showing dialog to avoid context issues after dialog closes
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    
+    // Logout menghapus antrean offline, jadi beri tahu dulu kalau masih ada isinya
+    final unsent = await OfflineStorageService().countUnsentReports();
+    if (!mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -403,7 +407,14 @@ class _ProfileScreenState extends State<ProfileScreen>
             Text('Logout'),
           ],
         ),
-        content: const Text('Apakah Anda yakin ingin logout?'),
+        content: unsent > 0
+            ? Text(
+                'Masih ada $unsent laporan (absen, aktivitas, atau patroli) yang belum terkirim ke server. '
+                'Kalau logout sekarang, laporan itu terhapus dari HP ini.\n\n'
+                'Sambungkan internet dan tunggu sampai terkirim, baru logout.',
+                style: TextStyle(color: Colors.red[800]),
+              )
+            : const Text('Apakah Anda yakin ingin logout?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -415,7 +426,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Logout'),
+            child: Text(unsent > 0 ? 'Tetap Logout' : 'Logout'),
           ),
         ],
       ),
