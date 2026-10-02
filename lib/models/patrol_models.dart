@@ -199,6 +199,21 @@ class PatrolRound {
       };
 }
 
+/// Hasil tinjauan SPV atas scan milik petugas ini, dikirim server di paket patroli.
+class PatrolReview {
+  final String clientScanId;
+  final String reviewStatus; // none | pending | accepted | rejected
+  final String? note;
+
+  const PatrolReview({required this.clientScanId, required this.reviewStatus, this.note});
+
+  factory PatrolReview.fromJson(Map<String, dynamic> json) => PatrolReview(
+        clientScanId: json['clientScanId']?.toString() ?? '',
+        reviewStatus: json['reviewStatus']?.toString() ?? 'none',
+        note: _str(json['reviewNote']),
+      );
+}
+
 class PatrolPack {
   final bool enabled;
   final String? siteId;
@@ -207,6 +222,9 @@ class PatrolPack {
   final List<PatrolPoint> points;
   final List<PatrolRoute> routes;
   final List<PatrolRound> rounds;
+
+  /// Hasil tinjauan scan milik petugas (clientScanId -> hasil). Tidak ikut disimpan di cache paket.
+  final Map<String, PatrolReview> reviews;
 
   /// Kapan paket ini diunduh (jam HP), untuk keterangan "paket diperbarui ...".
   final DateTime fetchedAt;
@@ -220,6 +238,7 @@ class PatrolPack {
     required this.routes,
     required this.rounds,
     required this.fetchedAt,
+    this.reviews = const {},
   });
 
   factory PatrolPack.fromJson(Map<String, dynamic> json, {DateTime? fetchedAt}) {
@@ -235,6 +254,10 @@ class PatrolPack {
       routes: maps('routes').map(PatrolRoute.fromJson).toList(),
       rounds: maps('rounds').map(PatrolRound.fromJson).toList()..sort((a, b) => a.windowStart.compareTo(b.windowStart)),
       fetchedAt: fetchedAt ?? DateTime.tryParse(json['fetchedAt']?.toString() ?? '')?.toLocal() ?? DateTime.now(),
+      reviews: {
+        for (final r in maps('reviews').map(PatrolReview.fromJson))
+          if (r.clientScanId.isNotEmpty) r.clientScanId: r,
+      },
     );
   }
 
@@ -282,20 +305,51 @@ class PatrolTaskResult {
   final bool done;
   final String? note;
 
-  const PatrolTaskResult({required this.id, required this.label, required this.done, this.note});
+  /// Foto bukti tugas ini (opsional). [photoPath] = berkas di HP selama menunggu terkirim;
+  /// [photoUrl] = alamat setelah terunggah, dan hanya itu yang dikirim ke server.
+  final String? photoPath;
+  final String? photoUrl;
+
+  const PatrolTaskResult({
+    required this.id,
+    required this.label,
+    required this.done,
+    this.note,
+    this.photoPath,
+    this.photoUrl,
+  });
+
+  PatrolTaskResult copyWith({String? photoPath, String? photoUrl}) => PatrolTaskResult(
+        id: id,
+        label: label,
+        done: done,
+        note: note,
+        photoPath: photoPath ?? this.photoPath,
+        photoUrl: photoUrl ?? this.photoUrl,
+      );
 
   factory PatrolTaskResult.fromJson(Map<String, dynamic> json) => PatrolTaskResult(
         id: json['id']?.toString() ?? '',
         label: json['label']?.toString() ?? '',
         done: json['done'] == true,
         note: _str(json['note']),
+        photoPath: _str(json['photoPath']),
+        photoUrl: _str(json['photoUrl']),
       );
 
+  /// Bentuk yang dikirim ke server (kontrak taskResults di scanItemSchema): tanpa jalur berkas lokal.
   Map<String, dynamic> toJson() => {
         'id': id,
         'label': label,
         'done': done,
         if (note != null && note!.trim().isNotEmpty) 'note': note!.trim(),
+        if (photoUrl != null && photoUrl!.isNotEmpty) 'photoUrl': photoUrl,
+      };
+
+  /// Bentuk yang disimpan di antrean HP: ditambah jalur berkas supaya foto tidak hilang saat offline.
+  Map<String, dynamic> toLocalJson() => {
+        ...toJson(),
+        if (photoPath != null && photoPath!.isNotEmpty) 'photoPath': photoPath,
       };
 }
 
@@ -350,6 +404,10 @@ class PatrolQueuedScan {
     this.appVersion,
   });
 
+  /// Berkas foto tugas yang masih ada di HP (dihapus setelah scan terkirim).
+  List<String> get taskPhotoPaths =>
+      taskResults.map((t) => t.photoPath).whereType<String>().where((p) => p.isNotEmpty).toList();
+
   bool get isSent =>
       status == PatrolScanStatus.accepted ||
       status == PatrolScanStatus.flagged ||
@@ -359,6 +417,7 @@ class PatrolQueuedScan {
   bool get needsSending => status == PatrolScanStatus.pending || status == PatrolScanStatus.retry;
 
   PatrolQueuedScan copyWith({
+    List<PatrolTaskResult>? taskResults,
     List<String>? uploadedPhotoUrls,
     List<String>? localPhotoPaths,
     PatrolScanStatus? status,
@@ -380,7 +439,7 @@ class PatrolQueuedScan {
         isMocked: isMocked,
         condition: condition,
         note: note,
-        taskResults: taskResults,
+        taskResults: taskResults ?? this.taskResults,
         localPhotoPaths: localPhotoPaths ?? this.localPhotoPaths,
         uploadedPhotoUrls: uploadedPhotoUrls ?? this.uploadedPhotoUrls,
         status: status ?? this.status,
@@ -454,7 +513,7 @@ class PatrolQueuedScan {
         'isMocked': isMocked,
         'condition': condition,
         'note': note,
-        'taskResults': taskResults.map((t) => t.toJson()).toList(),
+        'taskResults': taskResults.map((t) => t.toLocalJson()).toList(),
         'localPhotoPaths': localPhotoPaths,
         'uploadedPhotoUrls': uploadedPhotoUrls,
         'status': status.name,

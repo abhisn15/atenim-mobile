@@ -133,6 +133,7 @@ class PatrolProvider extends ChangeNotifier {
       _packError = null;
       _forbiddenMessage = null;
       await _service.saveCachedPack(userId, fresh);
+      await _applyReviews(userId, fresh.reviews);
     } on PatrolForbiddenException catch (e) {
       _forbiddenMessage = e.message;
     } catch (e) {
@@ -141,6 +142,25 @@ class PatrolProvider extends ChangeNotifier {
       _loadingPack = false;
       notifyListeners();
     }
+  }
+
+  /// Perbarui status scan lokal yang tadinya "ditinjau SPV" bila SPV sudah menerima atau menolaknya.
+  Future<void> _applyReviews(String userId, Map<String, PatrolReview> reviews) async {
+    if (reviews.isEmpty) return;
+    var changed = false;
+    for (final q in List<PatrolQueuedScan>.from(_queue)) {
+      final review = reviews[q.clientScanId];
+      if (review == null || q.status != PatrolScanStatus.flagged) continue;
+      if (review.reviewStatus == 'accepted') {
+        _replace(q.copyWith(status: PatrolScanStatus.accepted, message: 'Diterima SPV'));
+        changed = true;
+      } else if (review.reviewStatus == 'rejected') {
+        final note = (review.note ?? '').trim();
+        _replace(q.copyWith(status: PatrolScanStatus.rejected, message: note.isEmpty ? 'SPV menolak scan ini' : 'SPV: $note'));
+        changed = true;
+      }
+    }
+    if (changed) await _service.saveQueue(userId, _queue);
   }
 
   // ---------- stiker & titik ----------
@@ -261,12 +281,26 @@ class PatrolProvider extends ChangeNotifier {
     String? note,
     required List<PatrolTaskResult> taskResults,
     required List<File> photos,
+    Map<String, File> taskPhotos = const {},
   }) async {
     final userId = _userId;
     if (userId == null) throw StateError('Belum masuk');
     final kept = <String>[];
     for (var i = 0; i < photos.length; i++) {
       kept.add(await _service.keepPhoto(userId, photos[i], clientScanId, i));
+    }
+    // Foto per tugas: hanya untuk tugas yang dicentang. Indeks 100+ supaya nama berkas tidak bentrok
+    // dengan foto titik.
+    var taskPhotoIndex = 100;
+    final resultsWithPhotos = <PatrolTaskResult>[];
+    for (final t in taskResults) {
+      final file = t.done ? taskPhotos[t.id] : null;
+      if (file == null) {
+        resultsWithPhotos.add(t);
+        continue;
+      }
+      final path = await _service.keepPhoto(userId, file, clientScanId, taskPhotoIndex++);
+      resultsWithPhotos.add(t.copyWith(photoPath: path));
     }
     final scan = PatrolQueuedScan(
       clientScanId: clientScanId,
@@ -283,7 +317,7 @@ class PatrolProvider extends ChangeNotifier {
       isMocked: isMocked,
       condition: condition,
       note: note,
-      taskResults: taskResults,
+      taskResults: resultsWithPhotos,
       localPhotoPaths: kept,
       packVersion: _pack?.packVersion,
       appVersion: _appVersion,
@@ -333,6 +367,19 @@ class PatrolProvider extends ChangeNotifier {
           _replace(current);
           await _service.saveQueue(userId, _queue);
         }
+        // Foto per tugas: unggah satu per satu dan simpan alamatnya di antrean supaya tidak terunggah ulang.
+        for (var i = 0; i < current.taskResults.length; i++) {
+          final task = current.taskResults[i];
+          final path = task.photoPath;
+          if (path == null || path.isEmpty || task.photoUrl != null) continue;
+          if (!await File(path).exists()) continue; // foto terhapus sistem: kirim tanpa foto itu
+          final url = await _service.uploadPhoto(path);
+          final updatedTasks = [...current.taskResults];
+          updatedTasks[i] = task.copyWith(photoUrl: url);
+          current = current.copyWith(taskResults: updatedTasks);
+          _replace(current);
+          await _service.saveQueue(userId, _queue);
+        }
         ready.add(current);
       }
       for (var start = 0; start < ready.length; start += 50) {
@@ -346,7 +393,7 @@ class PatrolProvider extends ChangeNotifier {
           _replace(updated);
           if (updated.isSent) {
             anyFinal = true;
-            await _service.deletePhotos(updated.localPhotoPaths);
+            await _service.deletePhotos([...updated.localPhotoPaths, ...updated.taskPhotoPaths]);
           }
         }
         await _service.saveQueue(userId, _queue);

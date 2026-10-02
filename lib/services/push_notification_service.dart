@@ -9,9 +9,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
 
 import '../config/api_config.dart';
 import '../app_keys.dart';
+import '../providers/patrol_provider.dart';
 import '../screens/notifications/notification_screen.dart';
 import '../utils/html_text.dart';
 import 'api_service.dart';
@@ -109,6 +111,11 @@ class PushNotificationService {
 
   static void _handleForegroundMessage(RemoteMessage message) {
     incomingMessageTick.value++;
+    // Hasil tinjauan patroli: segarkan paket supaya "Scan saya" langsung berubah tanpa menunggu 15 menit.
+    if (message.data['type'] == 'patrol_review') {
+      final ctx = navigatorKey.currentContext;
+      if (ctx != null) unawaited(Provider.of<PatrolProvider>(ctx, listen: false).refresh());
+    }
     final notification = message.notification;
     if (notification == null) return;
 

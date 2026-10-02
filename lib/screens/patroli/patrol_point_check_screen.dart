@@ -1,16 +1,25 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:camera/camera.dart' show ResolutionPreset;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as geo;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/patrol_models.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/patrol_provider.dart';
+import '../../utils/patrol_geo.dart';
+import '../../utils/photo_watermark.dart';
+import '../../widgets/ui_kit.dart';
 import '../camera/camera_screen.dart';
 
 /// Cara titik dicatat: scan stiker, "tidak bisa scan" (ditinjau SPV), atau dilewati dengan alasan.
 enum PatrolCheckMethod { qr, manual, skip }
+
+/// Alasan "tidak bisa scan" / dilewati harus cukup jelas bagi SPV; server menandai alasan yang lebih pendek.
+const int _minReasonChars = 10;
 
 /// Halaman cek satu titik. Untuk scan QR, tugas titik baru terbuka di sini setelah stikernya terbaca.
 class PatrolPointCheckScreen extends StatefulWidget {
@@ -37,6 +46,8 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
   final TextEditingController _noteCtrl = TextEditingController();
   final TextEditingController _reasonCtrl = TextEditingController();
   final List<File> _photos = [];
+  // Foto bukti per tugas (satu per tugas). Hanya yang tugasnya dicentang yang dikirim.
+  final Map<String, File> _taskPhotos = {};
   final ScrollController _scroll = ScrollController();
   String _condition = 'aman';
   geo.Position? _fix;
@@ -45,6 +56,19 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
   bool _saving = false;
   bool _saved = false;
   String? _formError;
+
+  /// Penilaian lokasi saat ini (jarak ke titik, radius, akurasi) dengan aturan yang sama dengan server.
+  PatrolGeoCheck get _geo => PatrolGeoCheck.evaluate(
+        pointLat: _point.latitude,
+        pointLng: _point.longitude,
+        radiusMeters: _point.radiusMeters,
+        gpsMode: _point.gpsMode,
+        lat: _fix?.latitude,
+        lng: _fix?.longitude,
+        accuracy: _fix?.accuracy,
+        mocked: _fix?.isMocked ?? false,
+        fixTime: _fix?.timestamp,
+      );
 
   PatrolCheckMethod get _method => widget.method;
   PatrolPoint get _point => widget.point;
@@ -68,6 +92,7 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
   }
 
   Future<void> _locate() async {
+    if (mounted && !_locating) setState(() => _locating = true);
     try {
       final permission = await geo.Geolocator.checkPermission();
       if (permission == geo.LocationPermission.denied || permission == geo.LocationPermission.deniedForever) {
@@ -119,6 +144,7 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
 
   bool get _dirty =>
       _photos.isNotEmpty ||
+      _taskPhotos.isNotEmpty ||
       _noteCtrl.text.trim().isNotEmpty ||
       _reasonCtrl.text.trim().isNotEmpty ||
       _taskDone.values.any((v) => v) ||
@@ -130,14 +156,50 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
     final photo = await Navigator.push<File>(
       context,
       MaterialPageRoute(
-        builder: (_) => const CameraScreen(title: 'Foto titik patroli', allowGallery: false, preferLowResolution: true),
+        builder: (_) => const CameraScreen(title: 'Foto titik patroli', allowGallery: false, preset: ResolutionPreset.medium),
       ),
     );
     if (photo != null && mounted) {
+      final stamped = await _stampPhoto(photo);
+      if (!mounted) return;
       setState(() {
-        _photos.add(photo);
+        _photos.add(stamped);
         _formError = null;
       });
+    }
+  }
+
+  /// Membakar titik, jam, koordinat GPS, dan nama petugas ke foto. Jalur "tidak bisa scan" diberi penanda
+  /// tegas supaya peninjau tahu foto ini bukan bukti scan QR.
+  Future<File> _stampPhoto(File photo, {String? taskLabel}) {
+    final fix = _fix;
+    final officer = context.read<AuthProvider>().user?.name;
+    return PhotoWatermark.stamp(photo, [
+      '${_point.code} · ${_point.name}${taskLabel == null ? '' : ' · $taskLabel'}',
+      PhotoWatermark.formatMoment(DateTime.now()),
+      PhotoWatermark.formatLocation(
+        latitude: fix?.latitude,
+        longitude: fix?.longitude,
+        accuracy: fix?.accuracy,
+        mocked: fix?.isMocked ?? false,
+      ),
+      if (officer != null && officer.isNotEmpty) 'Petugas: $officer',
+      if (_method == PatrolCheckMethod.manual) 'TANPA SCAN QR',
+    ]);
+  }
+
+  Future<void> _takeTaskPhoto(PatrolTask task) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    final photo = await Navigator.push<File>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CameraScreen(title: 'Foto: ${task.label}', allowGallery: false, preset: ResolutionPreset.medium),
+      ),
+    );
+    if (photo != null && mounted) {
+      final stamped = await _stampPhoto(photo, taskLabel: task.label);
+      if (!mounted) return;
+      setState(() => _taskPhotos[task.id] = stamped);
     }
   }
 
@@ -148,8 +210,10 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
     final reason = _reasonCtrl.text.trim();
     final note = _noteCtrl.text.trim();
     String? error;
-    if (_method != PatrolCheckMethod.qr && reason.length < 3) {
-      error = _method == PatrolCheckMethod.skip ? 'Tulis alasan titik ini dilewati.' : 'Tulis alasan stiker tidak bisa discan.';
+    if (_method != PatrolCheckMethod.qr && reason.length < _minReasonChars) {
+      error = _method == PatrolCheckMethod.skip
+          ? 'Tulis alasan titik ini dilewati (minimal $_minReasonChars huruf).'
+          : 'Tulis alasan stiker tidak bisa discan (minimal $_minReasonChars huruf).';
     } else if (_condition == 'temuan' && note.length < 5) {
       error = 'Jelaskan temuan di catatan (minimal 5 huruf).';
     } else if (_photoRequired && _photos.isEmpty) {
@@ -177,6 +241,30 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
       if (ok != true) return;
     }
 
+    final geoCheck = _geo;
+    if (_method != PatrolCheckMethod.skip && geoCheck.willBeFlaggedHeavy) {
+      final detail = geoCheck.mocked
+          ? 'HP ini terdeteksi memakai lokasi palsu. Scan akan ditandai dan menunggu tinjauan SPV.'
+          : 'Anda terdeteksi sekitar ${geoCheck.distanceM!.round()} m dari titik (radius ${geoCheck.radiusM} m). '
+              'Scan akan ditandai dan menunggu tinjauan SPV. Dekati titiknya lalu perbarui lokasi, atau tetap simpan bila memang di titik yang benar.';
+      if (!mounted) return;
+      final choice = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(geoCheck.mocked ? 'Lokasi palsu terdeteksi' : 'Lokasi jauh dari titik'),
+          content: Text(detail),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Perbarui lokasi')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Tetap simpan')),
+          ],
+        ),
+      );
+      if (choice != true) {
+        if (choice == false) unawaited(_locate());
+        return;
+      }
+    }
+
     setState(() => _saving = true);
     final fix = _fix;
     try {
@@ -198,6 +286,7 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
                 ? const []
                 : _point.tasks.map((t) => PatrolTaskResult(id: t.id, label: t.label, done: _taskDone[t.id] == true)).toList(),
             photos: _photos,
+            taskPhotos: _taskPhotos,
           );
       _saved = true;
       if (mounted) Navigator.pop(context, scan);
@@ -260,7 +349,7 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
           children: [
             _PointHeader(point: _point, method: _method, scannedAt: widget.scannedAt),
             const SizedBox(height: 12),
-            _LocationLine(locating: _locating, fix: _fix, error: _locError),
+            _LocationCard(locating: _locating, check: _geo, hasFix: _fix != null, error: _locError, onRefresh: _locate),
             if (_method != PatrolCheckMethod.qr) ...[
               const SizedBox(height: 20),
               _ReasonField(
@@ -283,13 +372,21 @@ class _PatrolPointCheckScreenState extends State<PatrolPointCheckScreen> {
                   margin: EdgeInsets.zero,
                   child: Column(
                     children: [
-                      for (final t in _point.tasks)
+                      for (final t in _point.tasks) ...[
                         CheckboxListTile(
                           value: _taskDone[t.id] == true,
                           onChanged: (v) => setState(() => _taskDone[t.id] = v == true),
                           title: Text(t.label),
                           controlAffinity: ListTileControlAffinity.leading,
                         ),
+                        // Foto bukti per tugas: muncul setelah tugasnya dicentang, boleh dikosongkan.
+                        if (_taskDone[t.id] == true)
+                          _TaskPhotoRow(
+                            photo: _taskPhotos[t.id],
+                            onTake: () => _takeTaskPhoto(t),
+                            onRemove: () => setState(() => _taskPhotos.remove(t.id)),
+                          ),
+                      ],
                     ],
                   ),
                 ),
@@ -441,35 +538,115 @@ class _PointHeader extends StatelessWidget {
   }
 }
 
-class _LocationLine extends StatelessWidget {
+class _LocationCard extends StatelessWidget {
   final bool locating;
-  final geo.Position? fix;
+  final PatrolGeoCheck check;
+  final bool hasFix;
   final String? error;
+  final VoidCallback onRefresh;
 
-  const _LocationLine({required this.locating, required this.fix, required this.error});
+  const _LocationCard({
+    required this.locating,
+    required this.check,
+    required this.hasFix,
+    required this.error,
+    required this.onRefresh,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final String text;
+    final String title;
+    String? detail;
     final IconData icon;
-    Color color = Colors.grey[800]!;
+    final Tone tone;
+    var canRefresh = true;
+
+    final acc = check.accuracyM == null ? '' : ', akurasi ± ${check.accuracyM!.round()} m';
     if (locating) {
-      text = 'Mencari lokasi GPS...';
+      title = 'Mencari lokasi GPS...';
       icon = Icons.gps_not_fixed;
-    } else if (fix != null) {
-      text = 'Lokasi tercatat, akurasi ± ${fix!.accuracy.round()} m';
-      icon = Icons.gps_fixed;
-      color = Colors.green[800]!;
+      tone = Tone.neutral;
+      canRefresh = false;
+    } else if (check.mocked) {
+      title = 'Lokasi palsu terdeteksi';
+      detail = 'Matikan aplikasi lokasi palsu di HP ini. Scan akan ditandai dan menunggu tinjauan SPV.';
+      icon = Icons.location_off;
+      tone = Tone.danger;
     } else {
-      text = error ?? 'Lokasi GPS tidak didapat.';
-      icon = Icons.gps_off;
+      switch (check.state) {
+        case PatrolGeoState.notEvaluated:
+          title = hasFix ? 'Lokasi tercatat$acc' : 'Titik ini tidak memeriksa jarak GPS';
+          detail = hasFix ? 'Titik ini tidak memakai pengecekan jarak.' : null;
+          icon = hasFix ? Icons.gps_fixed : Icons.gps_not_fixed;
+          tone = Tone.neutral;
+        case PatrolGeoState.noFix:
+          title = 'Lokasi GPS belum didapat';
+          detail = '${error ?? 'Keluar ke area terbuka'} lalu ketuk Perbarui lokasi. Hasil cek tetap bisa disimpan, tetapi akan ditandai.';
+          icon = Icons.gps_off;
+          tone = Tone.warning;
+        case PatrolGeoState.weakGps:
+          title = 'GPS lemah$acc';
+          detail = 'Jarak ke titik belum bisa dipastikan. Tunggu beberapa detik atau pindah ke area terbuka, lalu ketuk Perbarui lokasi.';
+          icon = Icons.signal_cellular_connected_no_internet_0_bar;
+          tone = Tone.warning;
+        case PatrolGeoState.atPoint:
+          title = 'Di titik: ± ${check.distanceM!.round()} m dari titik';
+          detail = 'Radius ${check.radiusM} m$acc.';
+          icon = Icons.gps_fixed;
+          tone = Tone.success;
+        case PatrolGeoState.edge:
+          title = 'Di tepi radius: ± ${check.distanceM!.round()} m dari titik';
+          detail = 'Radius ${check.radiusM} m$acc. Mendekatlah ke titik supaya scan tidak ditandai.';
+          icon = Icons.near_me;
+          tone = Tone.warning;
+        case PatrolGeoState.outside:
+          title = 'Jauh dari titik: ± ${check.distanceM!.round()} m';
+          detail = 'Radius ${check.radiusM} m$acc. Scan akan ditandai dan menunggu tinjauan SPV. Dekati titiknya lalu ketuk Perbarui lokasi.';
+          icon = Icons.wrong_location;
+          tone = Tone.danger;
+      }
+      if (check.stale && check.state != PatrolGeoState.noFix) {
+        detail = '${detail ?? ''} Lokasi ini dari pembacaan lama, ketuk Perbarui lokasi.'.trim();
+      }
     }
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 8),
-        Expanded(child: Text(text, style: TextStyle(color: color, fontSize: 13))),
-      ],
+
+    final colors = toneColors(tone);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+      decoration: BoxDecoration(
+        color: colors.bg,
+        borderRadius: BorderRadius.circular(AtenimUi.radiusControl),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: locating
+                ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: colors.fg))
+                : Icon(icon, size: 18, color: colors.fg),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(color: colors.fg, fontSize: 14, fontWeight: FontWeight.w700)),
+                if (detail != null) ...[
+                  const SizedBox(height: 2),
+                  Text(detail, style: TextStyle(color: colors.fg, fontSize: 13, height: 1.3)),
+                ],
+              ],
+            ),
+          ),
+          if (canRefresh)
+            TextButton(
+              onPressed: onRefresh,
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48), foregroundColor: colors.fg),
+              child: const Text('Perbarui lokasi', textAlign: TextAlign.center),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -515,7 +692,7 @@ class _ReasonField extends StatelessWidget {
           controller: controller,
           maxLength: 500,
           onChanged: (_) => onChanged(),
-          decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Tulis alasan singkat'),
+          decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Tulis alasan, minimal 10 huruf'),
         ),
         Text(note, style: TextStyle(color: Colors.grey[800], fontSize: 13)),
       ],
@@ -576,6 +753,51 @@ class _PhotoSection extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+/// Baris foto di bawah satu tugas: tombol ambil foto, atau gambar kecil dengan Ganti/Hapus.
+class _TaskPhotoRow extends StatelessWidget {
+  final File? photo;
+  final VoidCallback onTake;
+  final VoidCallback onRemove;
+
+  const _TaskPhotoRow({required this.photo, required this.onTake, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(72, 0, 16, 12),
+      child: photo == null
+          ? Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: onTake,
+                icon: const Icon(Icons.photo_camera_outlined, size: 20),
+                label: const Text('Foto tugas (boleh tidak)'),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 48)),
+              ),
+            )
+          : Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(photo!, width: 64, height: 64, fit: BoxFit.cover),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: onTake,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+                  child: const Text('Ganti'),
+                ),
+                TextButton(
+                  onPressed: onRemove,
+                  style: TextButton.styleFrom(minimumSize: const Size(48, 48), foregroundColor: Colors.red[800]),
+                  child: const Text('Hapus'),
+                ),
+              ],
+            ),
     );
   }
 }

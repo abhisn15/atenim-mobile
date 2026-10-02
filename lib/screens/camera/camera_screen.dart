@@ -9,11 +9,16 @@ class CameraScreen extends StatefulWidget {
   final bool allowGallery;
   final bool preferLowResolution;
 
+  /// Preset kamera yang dipakai pertama. Bila diisi, menggantikan pilihan dari [preferLowResolution]; jika kamera gagal
+  /// dibuka dengan preset ini, jatuh ke ResolutionPreset.low (HP kelas bawah).
+  final ResolutionPreset? preset;
+
   const CameraScreen({
     super.key,
     required this.title,
     this.allowGallery = true,
     this.preferLowResolution = false,
+    this.preset,
   });
 
   @override
@@ -233,7 +238,9 @@ class _CameraScreenState extends State<CameraScreen>
       // Try different resolution presets for device compatibility
       // Start with LOW for low-end devices (Redmi 5A) to prevent OOM
       // Fallback to medium if low fails, then try high as last resort
-      final presets = widget.preferLowResolution
+      final presets = widget.preset != null
+          ? [widget.preset!, if (widget.preset != ResolutionPreset.low) ResolutionPreset.low]
+          : widget.preferLowResolution
           ? [ResolutionPreset.low] // Force low resolution for low-end devices
           : [
               ResolutionPreset.medium,
@@ -438,9 +445,8 @@ class _CameraScreenState extends State<CameraScreen>
       // Try medium preset first for better compatibility
       _controller = CameraController(
         _cameras![_currentCameraIndex],
-        widget.preferLowResolution
-            ? ResolutionPreset.low
-            : ResolutionPreset.medium,
+        widget.preset ??
+            (widget.preferLowResolution ? ResolutionPreset.low : ResolutionPreset.medium),
         enableAudio: false,
       );
 

@@ -579,10 +579,10 @@ String _historyText(PatrolQueuedScan s) {
     _ => s.condition == 'temuan' ? 'Ada temuan' : 'Aman',
   };
   final status = switch (s.status) {
-    PatrolScanStatus.accepted => 'terkirim',
+    PatrolScanStatus.accepted => s.message == 'Diterima SPV' ? 'diterima SPV' : 'terkirim',
     PatrolScanStatus.flagged => 'ditinjau SPV',
     PatrolScanStatus.duplicate => 'dobel, sudah tercatat',
-    PatrolScanStatus.rejected => 'ditolak: ${s.message ?? ''}',
+    PatrolScanStatus.rejected => (s.message ?? '').startsWith('SPV') ? 'ditolak ${s.message}' : 'ditolak: ${s.message ?? ''}',
     _ => 'belum terkirim',
   };
   return '$kind · $status';
