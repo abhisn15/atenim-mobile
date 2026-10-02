@@ -59,6 +59,7 @@ dependencies:
   
   # Date & Time
   intl: ^0.20.2
+  image: ^4.5.4 # encode JPEG foto bertanda (lib/utils/photo_watermark.dart)
   
   # Image Display
   cached_network_image: ^3.3.1
@@ -93,6 +94,7 @@ flutter:
     - .env
     - assets/splash_screen.png
     - assets/icon.png
+    - shorebird.yaml
 
 # App Icon Configuration
 flutter_launcher_icons:
