@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/clock.dart' show workedMinutes;
+
 class AttendanceRecord {
   final String id;
   final String userId;
@@ -7,6 +9,10 @@ class AttendanceRecord {
   final String status; // present, late, absent, leave, sick, remote
   final String? checkIn;
   final String? checkOut;
+  /// Waktu penuh (tanggal + jam) check-in/out dari server, zona waktu perangkat. Dipakai untuk menghitung lama kerja:
+  /// teks "HH:mm" tidak membawa tanggal sehingga shift lintas hari salah hitung.
+  final DateTime? checkInAt;
+  final DateTime? checkOutAt;
   final String? originalCheckInDate;
   final String? shiftId;
   final String? notes;
@@ -34,6 +40,8 @@ class AttendanceRecord {
     required this.status,
     this.checkIn,
     this.checkOut,
+    this.checkInAt,
+    this.checkOutAt,
     this.originalCheckInDate,
     this.shiftId,
     this.notes,
@@ -53,6 +61,31 @@ class AttendanceRecord {
     this.breakReason,
   });
 
+  static DateTime? _parseInstant(dynamic raw) {
+    if (raw is! String || raw.trim().isEmpty) return null;
+    return DateTime.tryParse(raw)?.toLocal();
+  }
+
+  /// Lama kerja kotor (menit, belum dikurangi istirahat) dari waktu penuh masuk sampai pulang, jadi masuk 07:00
+  /// kemarin dan pulang 10:00 hari ini = 27 jam. Bila belum pulang dan [now] diberikan, dihitung sampai [now].
+  /// Tanpa waktu penuh (data lama/cache lama) jatuh ke selisih "HH:mm" yang paling jauh 24 jam. Null bila tak terbaca.
+  int? workDurationMinutes({DateTime? now}) {
+    final start = checkInAt;
+    if (start != null) {
+      final end = checkOutAt ?? (checkOut == null ? now : null);
+      if (end != null) {
+        final diff = end.difference(start).inMinutes;
+        // Pulang lebih awal dari masuk = data/jam janggal: lebih baik kosong daripada angka palsu.
+        return diff >= 0 ? diff : null;
+      }
+    }
+    if (checkOut == null) {
+      // Belum pulang dan tanpa waktu penuh: tidak ada dasar yang benar untuk menghitung.
+      return null;
+    }
+    return workedMinutes(checkIn, checkOut);
+  }
+
   factory AttendanceRecord.fromJson(Map<String, dynamic> json) {
     return AttendanceRecord(
       id: json['id'] as String? ?? '',
@@ -61,6 +94,8 @@ class AttendanceRecord {
       status: json['status'] as String? ?? 'absent',
       checkIn: json['checkIn'] as String?,
       checkOut: json['checkOut'] as String?,
+      checkInAt: _parseInstant(json['checkInAt']),
+      checkOutAt: _parseInstant(json['checkOutAt']),
       originalCheckInDate: json['originalCheckInDate'] as String?,
       shiftId: json['shiftId'] as String?,
       notes: json['notes'] as String?,
@@ -95,6 +130,8 @@ class AttendanceRecord {
       'status': status,
       'checkIn': checkIn,
       'checkOut': checkOut,
+      'checkInAt': checkInAt?.toUtc().toIso8601String(),
+      'checkOutAt': checkOutAt?.toUtc().toIso8601String(),
       'originalCheckInDate': originalCheckInDate,
       'shiftId': shiftId,
       'notes': notes,

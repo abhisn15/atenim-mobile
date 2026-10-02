@@ -280,7 +280,8 @@ class _SummaryCard extends StatelessWidget {
     final leave = count((s) => s == 'leave' || s == 'sick');
 
     final worked = records
-        .map((r) => workedMinutes(r.checkIn, r.checkOut))
+        .where((r) => r.checkOut != null || r.checkOutAt != null)
+        .map((r) => r.workDurationMinutes())
         .whereType<int>()
         .toList();
     final avgWorked = worked.isEmpty
@@ -384,15 +385,11 @@ class _TodayCard extends StatelessWidget {
 
     String durationLabel = '-';
     String durationCaption = 'Durasi';
-    final done = workedMinutes(record.checkIn, record.checkOut);
-    if (done != null) {
-      durationLabel = formatDuration(done);
-    } else if (inLabel != null && record.checkOut == null) {
-      final now = DateTime.now();
-      var running = (now.hour * 60 + now.minute) - clockMinutes(record.checkIn)!;
-      if (running < 0) running += 24 * 60;
-      durationLabel = formatDuration(running);
-      durationCaption = 'Berjalan';
+    final isRunning = record.checkOut == null && record.checkOutAt == null;
+    final worked = record.workDurationMinutes(now: DateTime.now());
+    if (worked != null) {
+      durationLabel = formatDuration(worked);
+      if (isRunning) durationCaption = 'Berjalan';
     }
 
     final notes = <Widget>[
@@ -592,7 +589,7 @@ class _HistoryTileState extends State<_HistoryTile> {
     final date = DateTime.tryParse(record.date);
     final inLabel = clockLabel(record.checkIn);
     final outLabel = clockLabel(record.checkOut);
-    final worked = workedMinutes(record.checkIn, record.checkOut);
+    final worked = record.workDurationMinutes();
     final inPhoto = _checkInPhotoUrl(record);
     final outPhoto = _checkOutPhotoUrl(record);
     final hasDetail = inLabel != null ||

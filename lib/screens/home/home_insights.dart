@@ -42,7 +42,8 @@ class AttendanceKpiRow extends StatelessWidget {
     final onTimeRate = attended == 0 ? null : (present / attended * 100).round();
 
     final worked = month
-        .map((r) => workedMinutes(r.checkIn, r.checkOut))
+        .where((r) => r.checkOut != null || r.checkOutAt != null)
+        .map((r) => r.workDurationMinutes())
         .whereType<int>()
         .toList();
     final avgWorked = worked.isEmpty
@@ -262,7 +263,7 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
 
       final outMin = clockMinutes(r.checkOut);
       if (outMin != null) {
-        final worked = workedMinutes(r.checkIn, r.checkOut);
+        final worked = r.workDurationMinutes();
         events.add(_TimelineEvent(
           key: 'out-${r.id}',
           minutes: outMin,
