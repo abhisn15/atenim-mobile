@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../../providers/patrol_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../screens/camera/camera_screen.dart';
 import '../../services/profile_service.dart';
@@ -393,6 +394,9 @@ class _ProfileScreenState extends State<ProfileScreen>
     // Logout menghapus antrean offline, jadi beri tahu dulu kalau masih ada isinya
     final unsent = await OfflineStorageService().countUnsentReports();
     if (!mounted) return;
+    // Scan Patroli QR memakai antrean sendiri di berkas: tidak terhapus saat logout, tetapi baru terkirim setelah
+    // akun yang sama masuk lagi dan ada sinyal. Pengguna perlu tahu itu.
+    final patrolPending = context.read<PatrolProvider>().pendingCount;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -414,7 +418,13 @@ class _ProfileScreenState extends State<ProfileScreen>
                 'Sambungkan internet dan tunggu sampai terkirim, baru logout.',
                 style: TextStyle(color: Colors.red[800]),
               )
-            : const Text('Apakah Anda yakin ingin logout?'),
+            : patrolPending > 0
+                ? Text(
+                    '$patrolPending scan patroli belum terkirim. Scan itu tetap tersimpan di HP dan akan terkirim '
+                    'otomatis setelah Anda masuk lagi dengan akun yang sama dan ada sinyal.'
+                    '\n\nApakah Anda yakin ingin logout?',
+                  )
+                : const Text('Apakah Anda yakin ingin logout?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -455,12 +465,10 @@ class _ProfileScreenState extends State<ProfileScreen>
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         elevation: 0,
-        backgroundColor: Colors.white,
         title: const Text(
           'Profil',
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: Colors.black87,
           ),
         ),
         centerTitle: true,
@@ -472,7 +480,7 @@ class _ProfileScreenState extends State<ProfileScreen>
 
               if (!_isEditing) {
                 return IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  icon: const Icon(Icons.edit),
                   onPressed: () {
                     _initializeForm(user);
                     setState(() {

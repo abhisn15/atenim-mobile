@@ -561,8 +561,6 @@ class _LeaderCheckpointTasksScreenState
     return Scaffold(
       appBar: AppBar(
         title: const Text('Kelola Tugas Anggota'),
-        backgroundColor: const Color(0xFF1E88E5),
-        foregroundColor: Colors.white,
         actions: [
           IconButton(
             tooltip: 'Tambah tugas checkpoint',

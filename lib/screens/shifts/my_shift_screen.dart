@@ -174,8 +174,6 @@ class _MyShiftScreenState extends State<MyShiftScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Shift Saya'),
-        backgroundColor: const Color(0xFF1E88E5),
-        foregroundColor: Colors.white,
       ),
       body: RefreshIndicator(
         onRefresh: _loadData,

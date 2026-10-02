@@ -192,8 +192,6 @@ class _TeamShiftManageScreenState extends State<TeamShiftManageScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Jadwal Shift Team'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
       ),
       body: RefreshIndicator(
         onRefresh: _loadData,

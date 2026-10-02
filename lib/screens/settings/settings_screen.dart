@@ -318,8 +318,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pengaturan'),
-        backgroundColor: const Color(0xFF1E88E5),
-        foregroundColor: Colors.white,
       ),
       body: ListView(
         children: [

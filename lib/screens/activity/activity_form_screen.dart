@@ -295,13 +295,6 @@ class _ActivityFormScreenState extends State<ActivityFormScreen> {
           title: const Text('Checkpoint Hari Ini'),
           centerTitle: true,
           elevation: 0,
-          backgroundColor: Colors.blue.shade600,
-          foregroundColor: Colors.white,
-          titleTextStyle: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: Colors.white,
-          ),
         ),
         body: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),

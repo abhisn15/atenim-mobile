@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
@@ -5149,6 +5150,8 @@ class _HomeTabState extends State<HomeTab>
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
+        // Header sapaan berlatar biru: ikon status bar terang
+        systemOverlayStyle: SystemUiOverlayStyle.light,
         automaticallyImplyLeading: false,
         // Cukup untuk avatar + nama + jabatan saat ukuran huruf sistem diperbesar
         toolbarHeight: 64,

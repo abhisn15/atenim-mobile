@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -143,24 +144,95 @@ class _MyAppState extends State<MyApp> {
           supportedLocales: const [Locale('id', 'ID'), Locale('en', 'US')],
           locale: const Locale('id', 'ID'),
           theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+            // Skema dasar dari seed biru, lalu warna utamanya dipaku ke biru identitas. Tanpa ini Material 3 menurunkan
+            // primary biru-baja (#36618E) dan pita toska di pemilih tanggal, berbeda dari tombol dan AppBar aplikasi.
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue).copyWith(
+              primary: AtenimUi.brand,
+              onPrimary: Colors.white,
+              primaryContainer: AtenimUi.brandSoft,
+              onPrimaryContainer: Colors.blue[900],
+              secondaryContainer: AtenimUi.brandSoft,
+              onSecondaryContainer: Colors.blue[900],
+              surfaceTint: Colors.transparent,
+            ),
             useMaterial3: true,
             // Latar halaman dan bilah atas seragam (DESIGN.md): abu sangat terang, tanpa tint dan bayangan.
             scaffoldBackgroundColor: AtenimUi.pageBg,
+            // AppBar biru identitas dengan teks dan ikon putih (kontras putih di atas blue[700] = 4,6:1).
+            // Ikon status bar ikut terang supaya terbaca di atas biru.
             appBarTheme: AppBarTheme(
-              backgroundColor: AtenimUi.pageBg,
-              foregroundColor: AtenimUi.ink,
+              backgroundColor: AtenimUi.brand,
+              foregroundColor: Colors.white,
               surfaceTintColor: Colors.transparent,
               elevation: 0,
               scrolledUnderElevation: 0,
               centerTitle: false,
-              titleTextStyle: TextStyle(
-                color: AtenimUi.ink,
+              iconTheme: const IconThemeData(color: Colors.white),
+              actionsIconTheme: const IconThemeData(color: Colors.white),
+              systemOverlayStyle: SystemUiOverlayStyle.light,
+              titleTextStyle: const TextStyle(
+                color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.w700,
               ),
             ),
             // Pindah layar: memudar sambil maju sedikit, lebih halus dari zoom bawaan Android.
+            // Popup seragam dengan kartu: sudut 16, putih tanpa tint, judul tegas. Bawaan Material 3 memakai
+            // sudut 28 dan warna tint yang berbeda dari bagian aplikasi lain.
+            // Tombol: aksi utama biru penuh, sekunder bergaris biru; tinggi sentuh 48, sudut 12 seperti kontrol lain.
+            elevatedButtonTheme: ElevatedButtonThemeData(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AtenimUi.brand,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey[300],
+                disabledForegroundColor: Colors.grey[600],
+                elevation: 0,
+                minimumSize: const Size(64, 48),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusControl)),
+                textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+            ),
+            filledButtonTheme: FilledButtonThemeData(
+              style: FilledButton.styleFrom(
+                backgroundColor: AtenimUi.brand,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(64, 48),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusControl)),
+                textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+              ),
+            ),
+            outlinedButtonTheme: OutlinedButtonThemeData(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AtenimUi.brand,
+                minimumSize: const Size(64, 48),
+                side: BorderSide(color: Colors.blue[300]!),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusControl)),
+                textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+            ),
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent,
+              rangeSelectionBackgroundColor: Colors.blue[100],
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusCard)),
+            ),
+            dialogTheme: DialogThemeData(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusCard)),
+              titleTextStyle: TextStyle(color: AtenimUi.ink, fontSize: 18, fontWeight: FontWeight.w700),
+              contentTextStyle: TextStyle(color: AtenimUi.inkSoft, fontSize: 14, height: 1.4),
+            ),
+            bottomSheetTheme: const BottomSheetThemeData(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent,
+              clipBehavior: Clip.antiAlias,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            ),
+            snackBarTheme: SnackBarThemeData(
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AtenimUi.radiusControl)),
+            ),
             pageTransitionsTheme: const PageTransitionsTheme(
               builders: {
                 TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),

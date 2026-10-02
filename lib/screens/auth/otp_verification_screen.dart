@@ -159,8 +159,6 @@ class _OTPVerificationScreenState extends State<OTPVerificationScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Verifikasi OTP'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
       ),
       body: SafeArea(
         child: SingleChildScrollView(

@@ -585,8 +585,6 @@ class _TeamTasksScreenState extends State<TeamTasksScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.isLeader ? 'Tugas Team Leader' : 'Tugas Saya'),
-        backgroundColor: const Color(0xFF1E88E5),
-        foregroundColor: Colors.white,
       ),
       body: RefreshIndicator(
         onRefresh: _loadTasks,

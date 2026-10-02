@@ -111,8 +111,6 @@ class _NewPasswordScreenState extends State<NewPasswordScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Password Baru'),
-        backgroundColor: Theme.of(context).primaryColor,
-        foregroundColor: Colors.white,
         automaticallyImplyLeading: false, // Remove back button
       ),
       body: SafeArea(

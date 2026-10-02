@@ -12,6 +12,7 @@ import '../incident_report/incident_report_screen.dart';
 import '../payroll/payroll_slips_screen.dart';
 import '../../widgets/offline_indicator.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/connectivity_provider.dart';
 import '../../providers/attendance_provider.dart';
 import '../../providers/request_provider.dart';
 import '../../providers/shift_provider.dart';
@@ -265,7 +266,8 @@ class _HomeScreenState extends State<HomeScreen>
     // Tab yang tidak bersebelahan (mis. Home ke Aktivitas) dilompati langsung: geser animasi akan
     // menyapu semua layar di antaranya. Layar tujuan tetap masuk dengan fade dari _onPageChanged.
     // Bila animasi dimatikan di sistem, selalu lompat langsung.
-    if ((index - current).abs() > 1 || MediaQuery.disableAnimationsOf(context)) {
+    if ((index - current).abs() > 1 ||
+        MediaQuery.disableAnimationsOf(context)) {
       controller.jumpToPage(index);
       return;
     }
@@ -461,37 +463,44 @@ class _HomeScreenState extends State<HomeScreen>
                 children: [
                   const OfflineIndicator(),
                   Expanded(
-                    child: PageView.builder(
-                      controller: _pageController!,
-                      onPageChanged: _onPageChanged,
-                      itemCount: screens.length,
-                      itemBuilder: (context, index) {
-                        final child = KeyedSubtree(
-                          key: ValueKey<int>(index),
-                          child: screens[index],
-                        );
-                        // Only animate the current page to avoid lifecycle assertion
-                        // when off-screen pages are deactivated during tab switch.
-                        if (index == _currentIndex) {
-                          return FadeTransition(
-                            opacity: _animationControllers![index],
-                            child: SlideTransition(
-                              position:
-                                  Tween<Offset>(
-                                    begin: const Offset(0.1, 0),
-                                    end: Offset.zero,
-                                  ).animate(
-                                    CurvedAnimation(
-                                      parent: _animationControllers![index],
-                                      curve: Curves.easeOut,
-                                    ),
-                                  ),
-                              child: child,
-                            ),
+                    // Saat pita offline tampil, ia sudah menutupi status bar: isi tidak perlu ruang status bar lagi
+                    child: MediaQuery.removePadding(
+                      context: context,
+                      removeTop: !context.select<ConnectivityProvider, bool>(
+                        (c) => c.isConnected,
+                      ),
+                      child: PageView.builder(
+                        controller: _pageController!,
+                        onPageChanged: _onPageChanged,
+                        itemCount: screens.length,
+                        itemBuilder: (context, index) {
+                          final child = KeyedSubtree(
+                            key: ValueKey<int>(index),
+                            child: screens[index],
                           );
-                        }
-                        return RepaintBoundary(child: child);
-                      },
+                          // Only animate the current page to avoid lifecycle assertion
+                          // when off-screen pages are deactivated during tab switch.
+                          if (index == _currentIndex) {
+                            return FadeTransition(
+                              opacity: _animationControllers![index],
+                              child: SlideTransition(
+                                position:
+                                    Tween<Offset>(
+                                      begin: const Offset(0.1, 0),
+                                      end: Offset.zero,
+                                    ).animate(
+                                      CurvedAnimation(
+                                        parent: _animationControllers![index],
+                                        curve: Curves.easeOut,
+                                      ),
+                                    ),
+                                child: child,
+                              ),
+                            );
+                          }
+                          return RepaintBoundary(child: child);
+                        },
+                      ),
                     ),
                   ),
                 ],

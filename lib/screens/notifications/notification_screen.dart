@@ -200,8 +200,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ),
         centerTitle: true,
         elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black87,
         surfaceTintColor: Colors.transparent,
       ),
       body: _buildBody(),
