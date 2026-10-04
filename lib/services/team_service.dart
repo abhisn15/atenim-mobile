@@ -4,6 +4,7 @@ import '../models/team_model.dart';
 import '../models/shift_model.dart';
 import '../models/shift_assignment_model.dart';
 import '../models/attendance_model.dart';
+import '../models/attendance_alert_model.dart';
 import '../models/team_task_model.dart';
 import '../models/leader_checkpoint_model.dart';
 
@@ -39,9 +40,11 @@ class TeamService {
     );
   }
 
+  /// Server membatasi 50 anggota per halaman (min(50, limit)). [limit] harus <= 50: meminta lebih membuat perulangan
+  /// berhenti di halaman pertama karena hasilnya selalu lebih sedikit dari yang diminta, dan anggota ke-51 dst hilang.
   Future<List<TeamMember>> getLeaderTeamMembers({
     required String teamId,
-    int limit = 100,
+    int limit = 50,
     bool fetchAll = true,
   }) async {
     final allMembers = <TeamMember>[];
@@ -278,6 +281,27 @@ class TeamService {
     }
 
     return LeaderAttendanceReport.fromJson(data);
+  }
+
+  /// Peringatan kehadiran anggota team yang dipimpin (server membatasi ke anggota team milik leader ini).
+  /// [kind]: `late`, `missing`, atau `outside`; kosong = semua.
+  Future<List<AttendanceAlert>> getAttendanceAlerts({int hours = 24, String? kind}) async {
+    final response = await _apiService.get(
+      ApiConfig.attendanceAlerts,
+      queryParameters: {'hours': hours, if (kind != null) 'kind': kind},
+    );
+    if (response.statusCode != 200) {
+      throw TeamServiceException(
+        response.data?['message']?.toString() ?? 'Gagal memuat peringatan kehadiran',
+        statusCode: response.statusCode,
+      );
+    }
+    final events = response.data?['data']?['events'];
+    if (events is! List) return [];
+    return [
+      for (final e in events)
+        if (e is Map) AttendanceAlert.fromJson(Map<String, dynamic>.from(e)),
+    ];
   }
 
   Future<List<TeamTask>> getLeaderTasks({

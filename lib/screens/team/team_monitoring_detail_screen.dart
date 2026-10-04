@@ -3,8 +3,13 @@ import 'package:intl/intl.dart';
 
 import '../../models/attendance_model.dart';
 import '../../models/shift_assignment_model.dart';
+import 'package:provider/provider.dart';
+
 import '../../models/team_model.dart';
+import '../../providers/auth_provider.dart';
 import '../../services/team_service.dart';
+import '../../utils/phone_contact.dart';
+import '../../widgets/contact_buttons.dart';
 import '../../widgets/shimmer_loading.dart';
 
 /// One row in the monitoring list (assignment + optional attendance log).
@@ -52,6 +57,7 @@ class _TeamMonitoringDetailScreenState extends State<TeamMonitoringDetailScreen>
   LeaderAttendanceReport? _report;
   /// Fallback: id -> nama dari daftar anggota tim (jika API assignment/log tidak kirim nama)
   Map<String, String> _ownerIdToName = {};
+  Map<String, String> _ownerIdToPhone = {};
   bool _loading = true;
   String? _error;
   int _currentPage = 1;
@@ -164,9 +170,13 @@ class _TeamMonitoringDetailScreenState extends State<TeamMonitoringDetailScreen>
       } catch (_) {}
 
       final ownerIdToName = <String, String>{};
+      final ownerIdToPhone = <String, String>{};
       for (final m in members) {
         if (m.id.trim().isNotEmpty && m.name.trim().isNotEmpty) {
           ownerIdToName[m.id] = m.name.trim();
+        }
+        if (m.id.trim().isNotEmpty && (m.phone ?? '').trim().isNotEmpty) {
+          ownerIdToPhone[m.id] = m.phone!.trim();
         }
       }
 
@@ -198,6 +208,7 @@ class _TeamMonitoringDetailScreenState extends State<TeamMonitoringDetailScreen>
         _assignments = assignments;
         _report = report;
         _ownerIdToName = ownerIdToName;
+        _ownerIdToPhone = ownerIdToPhone;
         _loading = false;
         _currentPage = 1;
       });
@@ -447,6 +458,14 @@ class _TeamMonitoringDetailScreenState extends State<TeamMonitoringDetailScreen>
                                     child: Text('Status: $statusLabel', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
                                   ),
                               ],
+                            ),
+                            trailing: ContactButtons(
+                              phone: _ownerIdToPhone[row.ownerId],
+                              memberName: row.ownerName,
+                              leaderName: Provider.of<AuthProvider>(context, listen: false).user?.name ?? '',
+                              reason: !row.hasCheckIn
+                                  ? ContactReason.notCheckedIn
+                                  : (row.status == 'late' ? ContactReason.late : ContactReason.general),
                             ),
                             leading: CircleAvatar(
                               backgroundColor: row.hasCheckIn ? Colors.green.shade100 : Colors.orange.shade100,
