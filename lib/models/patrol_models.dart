@@ -523,3 +523,222 @@ class PatrolQueuedScan {
         'appVersion': appVersion,
       };
 }
+
+// ---------- riwayat scan ----------
+
+/// Hasil penilaian satu scan dalam bahasa petugas. Kalimatnya disusun server; HP hanya menampilkan.
+/// [kind]: auto_accepted | extra | pending_review | accepted_by_spv | rejected_by_spv | duplicate | skipped,
+/// ditambah dua yang hanya dikenal HP: unsent (belum terkirim) dan rejected_server (ditolak saat dikirim).
+class PatrolOutcomeInfo {
+  final String kind;
+  final String title;
+  final String explanation;
+
+  /// Alasan scan ditandai. Tetap ada setelah SPV memutuskan, supaya petugas tahu kenapa ditinjau.
+  final List<String> reasons;
+
+  /// Catatan sistem yang tidak menahan scan.
+  final List<String> notes;
+
+  const PatrolOutcomeInfo({
+    required this.kind,
+    required this.title,
+    required this.explanation,
+    this.reasons = const [],
+    this.notes = const [],
+  });
+
+  factory PatrolOutcomeInfo.fromJson(Map<String, dynamic> json) => PatrolOutcomeInfo(
+        kind: json['kind']?.toString() ?? 'auto_accepted',
+        title: json['title']?.toString() ?? '',
+        explanation: json['explanation']?.toString() ?? '',
+        reasons: _strList(json['reasons']),
+        notes: _strList(json['notes']),
+      );
+}
+
+class PatrolHistoryTask {
+  final String label;
+  final bool done;
+  final String? note;
+  final String? photoUrl;
+
+  /// Berkas di HP, hanya untuk scan yang belum terkirim.
+  final String? photoPath;
+
+  const PatrolHistoryTask({required this.label, required this.done, this.note, this.photoUrl, this.photoPath});
+}
+
+/// Satu baris riwayat: dari server (lengkap, dengan alasan dan hasil tinjauan) atau dari antrean HP
+/// (belum terkirim, atau belum sempat dimuat dari server).
+class PatrolHistoryItem {
+  final String clientScanId;
+  final String pointCode;
+  final String? pointName;
+  final String? area;
+  final String? floor;
+  final DateTime scannedAt;
+  final String method; // qr | manual | skip
+  final String condition; // aman | temuan
+  final String? note;
+  final String? reason;
+  final List<PatrolHistoryTask> tasks;
+  final List<String> photoUrls;
+  final List<String> localPhotoPaths;
+  final String? geoLine;
+  final String reviewStatus; // none | pending | accepted | rejected
+  final String? reviewedBy;
+  final DateTime? reviewedAt;
+  final String? reviewNote;
+  final DateTime? roundStart;
+  final DateTime? roundEnd;
+  final PatrolOutcomeInfo outcome;
+  final bool fromServer;
+
+  const PatrolHistoryItem({
+    required this.clientScanId,
+    required this.pointCode,
+    this.pointName,
+    this.area,
+    this.floor,
+    required this.scannedAt,
+    required this.method,
+    required this.condition,
+    this.note,
+    this.reason,
+    this.tasks = const [],
+    this.photoUrls = const [],
+    this.localPhotoPaths = const [],
+    this.geoLine,
+    this.reviewStatus = 'none',
+    this.reviewedBy,
+    this.reviewedAt,
+    this.reviewNote,
+    this.roundStart,
+    this.roundEnd,
+    required this.outcome,
+    this.fromServer = false,
+  });
+
+  int get photoCount =>
+      photoUrls.length + localPhotoPaths.length + tasks.where((t) => t.photoUrl != null || t.photoPath != null).length;
+
+  factory PatrolHistoryItem.fromJson(Map<String, dynamic> json) {
+    final point = json['point'] is Map ? Map<String, dynamic>.from(json['point'] as Map) : const <String, dynamic>{};
+    final round = json['round'] is Map ? Map<String, dynamic>.from(json['round'] as Map) : null;
+    final tasks = json['taskResults'] is List ? (json['taskResults'] as List).whereType<Map>() : const <Map>[];
+    DateTime? time(dynamic v) => v is String ? DateTime.tryParse(v)?.toLocal() : null;
+    return PatrolHistoryItem(
+      clientScanId: json['clientScanId']?.toString() ?? '',
+      pointCode: point['code']?.toString() ?? '-',
+      pointName: _str(point['name']),
+      area: _str(point['area']),
+      floor: _str(point['floor']),
+      scannedAt: time(json['trustedTime']) ?? DateTime.fromMillisecondsSinceEpoch(0),
+      method: json['method']?.toString() ?? 'qr',
+      condition: json['condition']?.toString() ?? 'aman',
+      note: _str(json['note']),
+      reason: _str(json['reason']),
+      tasks: [
+        for (final t in tasks)
+          PatrolHistoryTask(
+            label: t['label']?.toString() ?? '',
+            done: t['done'] == true,
+            note: _str(t['note']),
+            photoUrl: _str(t['photoUrl']),
+          ),
+      ],
+      photoUrls: _strList(json['photoUrls']),
+      geoLine: _str(json['geoLine']),
+      reviewStatus: json['reviewStatus']?.toString() ?? 'none',
+      reviewedBy: _str(json['reviewedBy']),
+      reviewedAt: time(json['reviewedAt']),
+      reviewNote: _str(json['reviewNote']),
+      roundStart: round == null ? null : time(round['windowStart']),
+      roundEnd: round == null ? null : time(round['windowEnd']),
+      outcome: json['outcome'] is Map
+          ? PatrolOutcomeInfo.fromJson(Map<String, dynamic>.from(json['outcome'] as Map))
+          : const PatrolOutcomeInfo(kind: 'auto_accepted', title: 'Terkirim', explanation: ''),
+      fromServer: true,
+    );
+  }
+
+  /// Dari antrean HP. Penilaian lengkap baru ada setelah riwayat dimuat dari server, jadi kalimatnya
+  /// di sini sengaja hati-hati dan tidak mengarang alasan.
+  factory PatrolHistoryItem.fromLocal(PatrolQueuedScan q, {PatrolPoint? point}) {
+    final message = (q.message ?? '').trim();
+    final PatrolOutcomeInfo outcome = switch (q.status) {
+      PatrolScanStatus.pending || PatrolScanStatus.retry => PatrolOutcomeInfo(
+          kind: 'unsent',
+          title: 'Belum terkirim',
+          explanation: 'Scan tersimpan di HP dan dikirim otomatis begitu ada sinyal. Penilaian baru muncul setelah terkirim.'
+              '${q.status == PatrolScanStatus.retry && message.isNotEmpty ? ' ($message)' : ''}',
+        ),
+      PatrolScanStatus.flagged => const PatrolOutcomeInfo(
+          kind: 'pending_review',
+          title: 'Menunggu ditinjau SPV',
+          explanation: 'Scan sudah terkirim dan ditandai untuk diperiksa SPV. Alasan lengkapnya muncul setelah riwayat dimuat dari server.',
+        ),
+      PatrolScanStatus.duplicate => const PatrolOutcomeInfo(
+          kind: 'duplicate',
+          title: 'Sudah tercatat',
+          explanation: 'Titik ini sudah tercatat di ronde yang sama, jadi scan ini tidak dihitung dua kali.',
+        ),
+      PatrolScanStatus.rejected => message.startsWith('SPV')
+          ? PatrolOutcomeInfo(kind: 'rejected_by_spv', title: 'Ditolak SPV', explanation: message)
+          : PatrolOutcomeInfo(
+              kind: 'rejected_server',
+              title: 'Ditolak server',
+              explanation: message.isEmpty ? 'Server menolak scan ini.' : message,
+            ),
+      PatrolScanStatus.accepted => message == 'Diterima SPV'
+          ? const PatrolOutcomeInfo(kind: 'accepted_by_spv', title: 'Diterima SPV', explanation: 'SPV sudah menerima scan ini.')
+          : message.contains('patroli tambahan')
+              ? const PatrolOutcomeInfo(
+                  kind: 'extra',
+                  title: 'Patroli tambahan',
+                  explanation: 'Scan tersimpan, tetapi tidak ada ronde terjadwal pada jam ini, jadi tidak dihitung ke kepatuhan ronde.',
+                )
+              : const PatrolOutcomeInfo(
+                  kind: 'auto_accepted',
+                  title: 'Diterima otomatis oleh sistem',
+                  explanation: 'Sistem menerima scan ini tanpa perlu ditinjau SPV.',
+                ),
+    };
+    return PatrolHistoryItem(
+      clientScanId: q.clientScanId,
+      pointCode: q.pointCode,
+      pointName: point?.name,
+      area: point?.area,
+      floor: point?.floor,
+      scannedAt: q.scannedAt,
+      method: q.method,
+      condition: q.condition,
+      note: q.note,
+      reason: q.reason,
+      tasks: [
+        for (final t in q.taskResults)
+          PatrolHistoryTask(label: t.label, done: t.done, note: t.note, photoUrl: t.photoUrl, photoPath: t.photoPath),
+      ],
+      photoUrls: q.uploadedPhotoUrls,
+      localPhotoPaths: q.localPhotoPaths,
+      outcome: outcome,
+    );
+  }
+}
+
+/// Gabungan riwayat dari server dan antrean HP, terbaru dulu. Untuk scan yang ada di keduanya,
+/// data server yang dipakai (lebih lengkap dan sudah memuat keputusan SPV).
+List<PatrolHistoryItem> mergePatrolHistory({
+  required List<PatrolHistoryItem> server,
+  required List<PatrolQueuedScan> local,
+  Map<String, PatrolPoint> pointsById = const {},
+}) {
+  final known = {for (final s in server) s.clientScanId};
+  final merged = <PatrolHistoryItem>[
+    ...server,
+    for (final q in local)
+      if (!known.contains(q.clientScanId)) PatrolHistoryItem.fromLocal(q, point: pointsById[q.pointId]),
+  ]..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
+  return merged;
+}

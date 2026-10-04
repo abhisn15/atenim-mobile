@@ -6,7 +6,9 @@ import 'package:provider/provider.dart';
 
 import '../../models/patrol_models.dart';
 import '../../providers/patrol_provider.dart';
+import '../../utils/checkin_gate.dart';
 import 'patrol_point_check_screen.dart';
+import 'patrol_scan_detail_screen.dart';
 import 'patrol_scanner_screen.dart';
 
 final _hm = DateFormat('HH.mm', 'id_ID');
@@ -61,7 +63,15 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
     return p.nextRound(now) ?? (visible.isNotEmpty ? visible.last : null);
   }
 
+  /// Patroli hanya dihitung saat petugas sedang check-in, jadi ditahan di depan dengan penjelasan yang jelas.
+  bool _ensureCheckedIn() => ensureCheckedIn(
+        context,
+        CheckInPurpose.patrol,
+        onGoHome: () => Navigator.of(context).popUntil((route) => route.isFirst),
+      );
+
   Future<void> _startScan({PatrolPoint? expected}) async {
+    if (!_ensureCheckedIn()) return;
     final hit = await Navigator.push<PatrolScanHit>(
       context,
       MaterialPageRoute(builder: (_) => PatrolScannerScreen(expected: expected)),
@@ -71,6 +81,7 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
   }
 
   Future<void> _openCheck(PatrolPoint point, PatrolCheckMethod method, {String? token, DateTime? scannedAt}) async {
+    if (!_ensureCheckedIn()) return;
     final scan = await Navigator.push<PatrolQueuedScan>(
       context,
       MaterialPageRoute(
@@ -249,7 +260,7 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
                       ),
                 ],
                 const SizedBox(height: 20),
-                _HistorySection(scans: p.queue),
+                _HistorySection(items: p.history, error: p.historyError),
               ],
             ),
           ),
@@ -522,31 +533,59 @@ class _RoundChip extends StatelessWidget {
 }
 
 class _HistorySection extends StatelessWidget {
-  final List<PatrolQueuedScan> scans;
+  final List<PatrolHistoryItem> items;
+  final String? error;
 
-  const _HistorySection({required this.scans});
+  const _HistorySection({required this.items, this.error});
 
   @override
   Widget build(BuildContext context) {
-    final list = [...scans]..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
+    final onlyOnPhone = items.every((i) => !i.fromServer);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Scan saya', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        const Text('Riwayat scan saya', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+        const SizedBox(height: 2),
+        Text(
+          'Ketuk satu scan untuk melihat foto, hasil penilaian, dan alasannya.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+        ),
+        if (error != null && onlyOnPhone) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Riwayat lengkap dari server belum bisa dimuat. Yang tampil hanya scan yang tersimpan di HP ini.',
+            style: TextStyle(fontSize: 12, color: Colors.orange[900]),
+          ),
+        ],
         const SizedBox(height: 8),
-        if (list.isEmpty)
-          Text('Belum ada scan di HP ini.', style: TextStyle(color: Colors.grey[800]))
+        if (items.isEmpty)
+          Text('Belum ada scan.', style: TextStyle(color: Colors.grey[800]))
         else
           Card(
             margin: EdgeInsets.zero,
+            clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                for (final s in list.take(30))
+                for (final item in items.take(30))
                   ListTile(
                     dense: true,
-                    leading: Icon(_historyIcon(s), color: _historyColor(s)),
-                    title: Text('${s.pointCode} · ${_hm.format(s.scannedAt)} ${DateFormat('d MMM', 'id_ID').format(s.scannedAt)}'),
-                    subtitle: Text(_historyText(s)),
+                    leading: Icon(patrolOutcomeIcon(item.outcome.kind), color: patrolOutcomeColor(item.outcome.kind)),
+                    title: Text('${item.pointCode} · ${_hm.format(item.scannedAt)} ${DateFormat('d MMM', 'id_ID').format(item.scannedAt)}'),
+                    subtitle: Text(_historySubtitle(item), maxLines: 3, overflow: TextOverflow.ellipsis),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (item.photoCount > 0) ...[
+                          Icon(Icons.photo_outlined, size: 16, color: Colors.grey[700]),
+                          const SizedBox(width: 2),
+                          Text('${item.photoCount}', style: TextStyle(fontSize: 12, color: Colors.grey[700])),
+                        ],
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => PatrolScanDetailScreen(item: item)),
+                    ),
                   ),
               ],
             ),
@@ -556,34 +595,30 @@ class _HistorySection extends StatelessWidget {
   }
 }
 
-IconData _historyIcon(PatrolQueuedScan s) => switch (s.status) {
-      PatrolScanStatus.accepted => Icons.check_circle,
-      PatrolScanStatus.flagged => Icons.warning_amber_rounded,
-      PatrolScanStatus.duplicate => Icons.copy_all_outlined,
-      PatrolScanStatus.rejected => Icons.block,
-      _ => Icons.cloud_upload_outlined,
-    };
-
-Color _historyColor(PatrolQueuedScan s) => switch (s.status) {
-      PatrolScanStatus.accepted => Colors.green[700]!,
-      PatrolScanStatus.flagged => Colors.orange[800]!,
-      PatrolScanStatus.duplicate => Colors.blueGrey[600]!,
-      PatrolScanStatus.rejected => Colors.red[700]!,
-      _ => Colors.blue[800]!,
-    };
-
-String _historyText(PatrolQueuedScan s) {
-  final kind = switch (s.method) {
+String _historySubtitle(PatrolHistoryItem item) {
+  final kind = switch (item.method) {
     'manual' => 'Tanpa scan',
     'skip' => 'Dilewati',
-    _ => s.condition == 'temuan' ? 'Ada temuan' : 'Aman',
+    _ => item.condition == 'temuan' ? 'Ada temuan' : 'Aman',
   };
-  final status = switch (s.status) {
-    PatrolScanStatus.accepted => s.message == 'Diterima SPV' ? 'diterima SPV' : 'terkirim',
-    PatrolScanStatus.flagged => 'ditinjau SPV',
-    PatrolScanStatus.duplicate => 'dobel, sudah tercatat',
-    PatrolScanStatus.rejected => (s.message ?? '').startsWith('SPV') ? 'ditolak ${s.message}' : 'ditolak: ${s.message ?? ''}',
-    _ => 'belum terkirim',
-  };
-  return '$kind · $status';
+  final why = _historyWhy(item);
+  return '$kind · ${item.outcome.title}${why == null ? '' : '\n$why'}';
+}
+
+/// Satu baris alasan di daftar; rincian lengkapnya ada di layar detail.
+String? _historyWhy(PatrolHistoryItem item) {
+  final o = item.outcome;
+  switch (o.kind) {
+    case 'pending_review':
+      return o.reasons.isEmpty ? null : 'Ditandai karena: ${o.reasons.first}';
+    case 'accepted_by_spv':
+    case 'rejected_by_spv':
+      final note = (item.reviewNote ?? '').trim();
+      if (note.isNotEmpty) return 'Catatan SPV: $note';
+      return o.reasons.isEmpty ? null : 'Ditandai karena: ${o.reasons.first}';
+    case 'extra':
+      return 'Tidak dihitung ke ronde';
+    default:
+      return null;
+  }
 }

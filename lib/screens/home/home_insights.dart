@@ -3,11 +3,14 @@ import 'package:provider/provider.dart';
 
 import '../../models/activity_model.dart';
 import '../../models/attendance_model.dart';
+import '../../models/patrol_models.dart';
 import '../../providers/activity_provider.dart';
 import '../../providers/attendance_provider.dart';
+import '../../providers/patrol_provider.dart';
 import '../../utils/clock.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/ui_kit.dart';
+import '../patroli/patrol_scan_detail_screen.dart';
 
 /// KPI kehadiran bulan ini dari catatan absen yang dimuat: persentase tepat waktu, rata-rata lama kerja,
 /// dan jumlah hari tercatat, plus bilah komposisi. Semua angka dihitung dari catatan nyata; bila belum ada
@@ -135,6 +138,53 @@ class _KpiCell extends StatelessWidget {
   }
 }
 
+/// Warna baris timeline untuk satu scan patroli, menurut hasil penilaiannya.
+Tone patrolTimelineTone(String kind) => switch (kind) {
+      'auto_accepted' || 'accepted_by_spv' => Tone.success,
+      'pending_review' => Tone.warning,
+      'rejected_by_spv' || 'rejected_server' => Tone.danger,
+      'unsent' => Tone.info,
+      _ => Tone.neutral,
+    };
+
+/// Keterangan satu baris untuk scan patroli: jenis, hasil penilaian, dan jumlah tugas yang dikerjakan.
+String patrolTimelineDetail(PatrolHistoryItem s) {
+  final done = s.tasks.where((t) => t.done).length;
+  return [
+    if (s.method == 'manual')
+      'Tanpa scan QR'
+    else if (s.method == 'skip')
+      'Dilewati'
+    else if (s.condition == 'temuan')
+      'Ada temuan',
+    s.outcome.title,
+    if (s.tasks.isNotEmpty) '$done dari ${s.tasks.length} tugas',
+  ].join(' · ');
+}
+
+/// Awal jendela timeline. Biasanya tengah malam hari ini; bila ada absen yang masih terbuka sejak kemarin
+/// (shift malam, check-in 22.00 dan belum pulang), jendela dimulai dari check-in itu supaya kegiatan sebelum
+/// tengah malam tidak hilang dan urutannya benar. Check-in yang lebih tua dari 36 jam (lupa check-out) atau
+/// yang ada di masa depan (jam HP salah) diabaikan.
+DateTime timelineWindowStart(DateTime now, Iterable<DateTime?> checkIns) {
+  var start = DateTime(now.year, now.month, now.day);
+  final oldest = now.subtract(const Duration(hours: 36));
+  for (final c in checkIns) {
+    if (c == null || c.isAfter(now) || c.isBefore(oldest)) continue;
+    if (c.isBefore(start)) start = c;
+  }
+  return start;
+}
+
+/// Waktu untuk jam [minutesOfDay] yang terjadi pada atau setelah [anchor], paling lama sehari kemudian.
+/// Dipakai untuk jam "HH:mm" dari server: istirahat 01.00 dan check-out 06.00 pada shift yang mulai 22.00
+/// jatuh pada hari berikutnya.
+DateTime clockOnOrAfter(DateTime anchor, int minutesOfDay) {
+  final sameDay = DateTime(anchor.year, anchor.month, anchor.day, minutesOfDay ~/ 60, minutesOfDay % 60);
+  if (!sameDay.isBefore(anchor)) return sameDay;
+  return DateTime(anchor.year, anchor.month, anchor.day + 1, minutesOfDay ~/ 60, minutesOfDay % 60);
+}
+
 class _TimelineEvent {
   const _TimelineEvent({
     required this.key,
@@ -146,6 +196,8 @@ class _TimelineEvent {
     this.tone = Tone.neutral,
     this.pending = false,
     this.current = false,
+    this.onTap,
+    this.dayLabel,
   });
 
   final String key;
@@ -157,6 +209,10 @@ class _TimelineEvent {
   final Tone tone;
   final bool pending;
   final bool current;
+  final VoidCallback? onTap;
+
+  /// Keterangan hari bila kejadian bukan hari ini (mis. "Kemarin" pada shift malam).
+  final String? dayLabel;
 }
 
 /// Timeline kegiatan hari ini: check-in, istirahat, aktivitas/patroli yang dicatat, check-out, dan
@@ -184,12 +240,6 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
     });
   }
 
-  static bool _isToday(DateTime? d) {
-    if (d == null) return false;
-    final now = DateTime.now();
-    return d.year == now.year && d.month == now.month && d.day == now.day;
-  }
-
   static String _cleanSummary(String summary) {
     return summary
         .replaceFirst(RegExp(r'^\[TASK:[^\]]+\]\s*', caseSensitive: false), '')
@@ -197,18 +247,50 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
         .trim();
   }
 
-  List<_TimelineEvent> _buildEvents(AttendanceProvider attendance, ActivityProvider activities) {
+  static String _hm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  /// Waktu check-in yang sebenarnya: stempel waktu dari server bila ada, kalau tidak jam "HH:mm" pada
+  /// tanggal check-in (absen yang dibawa dari kemarin membawa tanggal aslinya di originalCheckInDate).
+  static DateTime? _checkInInstant(AttendanceRecord r, DateTime today0) {
+    final exact = r.checkInAt?.toLocal();
+    if (exact != null) return exact;
+    final minutes = clockMinutes(r.checkIn);
+    if (minutes == null) return null;
+    final origin = r.originalCheckInDate == null ? null : DateTime.tryParse(r.originalCheckInDate!);
+    final base = origin == null ? today0 : DateTime(origin.year, origin.month, origin.day);
+    return DateTime(base.year, base.month, base.day, minutes ~/ 60, minutes % 60);
+  }
+
+  static DateTime _windowStart(AttendanceProvider attendance, DateTime now) {
+    final today0 = DateTime(now.year, now.month, now.day);
+    return timelineWindowStart(now, [for (final r in attendance.todayRecords) _checkInInstant(r, today0)]);
+  }
+
+  List<_TimelineEvent> _buildEvents(
+    BuildContext context,
+    AttendanceProvider attendance,
+    ActivityProvider activities,
+    List<PatrolHistoryItem> patrolScans,
+  ) {
     final events = <_TimelineEvent>[];
-    final nowMinutes = DateTime.now().hour * 60 + DateTime.now().minute;
+    final now = DateTime.now();
+    final today0 = DateTime(now.year, now.month, now.day);
+    final windowStart = _windowStart(attendance, now);
+    // Urutan memakai menit sejak awal jendela (bukan menit dalam sehari), supaya kejadian setelah tengah malam
+    // pada shift malam tidak tampil sebelum check-in 22.00-nya.
+    int since(DateTime t) => t.difference(windowStart).inMinutes;
+    String? dayOf(DateTime t) => t.isBefore(today0) ? 'Kemarin' : null;
+    bool inWindow(DateTime t) => !t.isBefore(windowStart) && !t.isAfter(now.add(const Duration(minutes: 5)));
 
     for (final r in attendance.todayRecords) {
-      final inMin = clockMinutes(r.checkIn);
-      if (inMin != null) {
+      final checkInAt = _checkInInstant(r, today0);
+      if (checkInAt != null) {
         final status = r.status.toLowerCase();
         events.add(_TimelineEvent(
           key: 'in-${r.id}',
-          minutes: inMin,
-          time: clockLabel(r.checkIn)!,
+          minutes: since(checkInAt),
+          time: _hm(checkInAt),
+          dayLabel: dayOf(checkInAt),
           title: 'Check-in',
           detail: status == 'present' || status == 'remote'
               ? 'Tepat waktu'
@@ -218,40 +300,38 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
         ));
       }
 
-      var breakStartMin = clockMinutes(r.breakStart);
-      var breakEndMin = clockMinutes(r.breakEnd);
-      var breakStartLabel = clockLabel(r.breakStart);
-      var breakEndLabel = clockLabel(r.breakEnd);
+      DateTime? breakStartAt;
+      DateTime? breakEndAt;
+      final breakStartMin = clockMinutes(r.breakStart);
+      final breakEndMin = clockMinutes(r.breakEnd);
       var breakDuration = r.breakDurationMinutes;
       final session = attendance.breakState?.latestSession;
       if (breakStartMin == null && session != null && session.attendanceId == r.id) {
-        final s = DateTime.tryParse(session.startAt)?.toLocal();
-        final e = session.endAt == null ? null : DateTime.tryParse(session.endAt!)?.toLocal();
-        if (s != null) {
-          breakStartMin = s.hour * 60 + s.minute;
-          breakStartLabel = clockLabel(s.toIso8601String());
-        }
-        if (e != null) {
-          breakEndMin = e.hour * 60 + e.minute;
-          breakEndLabel = clockLabel(e.toIso8601String());
-        }
+        breakStartAt = DateTime.tryParse(session.startAt)?.toLocal();
+        breakEndAt = session.endAt == null ? null : DateTime.tryParse(session.endAt!)?.toLocal();
         breakDuration ??= session.durationMinutes;
+      } else {
+        final anchor = checkInAt ?? today0;
+        if (breakStartMin != null) breakStartAt = clockOnOrAfter(anchor, breakStartMin);
+        if (breakEndMin != null) breakEndAt = clockOnOrAfter(breakStartAt ?? anchor, breakEndMin);
       }
-      if (breakStartMin != null && breakStartLabel != null) {
+      if (breakStartAt != null) {
         events.add(_TimelineEvent(
           key: 'bs-${r.id}',
-          minutes: breakStartMin,
-          time: breakStartLabel,
+          minutes: since(breakStartAt),
+          time: _hm(breakStartAt),
+          dayLabel: dayOf(breakStartAt),
           title: 'Mulai istirahat',
           icon: Icons.free_breakfast_outlined,
           tone: Tone.info,
         ));
       }
-      if (breakEndMin != null && breakEndLabel != null) {
+      if (breakEndAt != null) {
         events.add(_TimelineEvent(
           key: 'be-${r.id}',
-          minutes: breakEndMin,
-          time: breakEndLabel,
+          minutes: since(breakEndAt),
+          time: _hm(breakEndAt),
+          dayLabel: dayOf(breakEndAt),
           title: 'Selesai istirahat',
           detail: breakDuration != null && breakDuration > 0
               ? 'Lama ${formatDuration(breakDuration)}'
@@ -261,27 +341,28 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
         ));
       }
 
-      final outMin = clockMinutes(r.checkOut);
-      if (outMin != null) {
+      final checkOutMin = clockMinutes(r.checkOut);
+      if (checkOutMin != null) {
+        final checkOutAt = r.checkOutAt?.toLocal() ?? clockOnOrAfter(checkInAt ?? today0, checkOutMin);
         final worked = r.workDurationMinutes();
         events.add(_TimelineEvent(
           key: 'out-${r.id}',
-          minutes: outMin,
-          time: clockLabel(r.checkOut)!,
+          minutes: since(checkOutAt),
+          time: _hm(checkOutAt),
+          dayLabel: dayOf(checkOutAt),
           title: r.isAutoCheckout ? 'Check-out otomatis' : 'Check-out',
           detail: worked != null ? 'Lama kerja ${formatDuration(worked)}' : null,
           icon: Icons.logout,
           tone: Tone.success,
         ));
-      } else if (inMin != null) {
-        var running = nowMinutes - inMin;
-        if (running < 0) running += 24 * 60;
+      } else if (checkInAt != null) {
+        final running = now.difference(checkInAt).inMinutes;
         events.add(_TimelineEvent(
           key: 'now-${r.id}',
-          minutes: 24 * 60, // selalu paling akhir
+          minutes: 1 << 20, // selalu paling akhir
           time: 'Sekarang',
           title: 'Sedang bekerja',
-          detail: 'Sudah ${formatDuration(running)}',
+          detail: 'Sudah ${formatDuration(running < 0 ? 0 : running)}',
           icon: Icons.work_outline,
           current: true,
         ));
@@ -296,9 +377,7 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
     for (final a in all) {
       if (!seen.add(a.id)) continue;
       final created = DateTime.tryParse(a.createdAt)?.toLocal();
-      if (!_isToday(created)) continue;
-      final minutes = created!.hour * 60 + created.minute;
-      final label = clockLabel(created.toIso8601String())!;
+      if (created == null || !inWindow(created)) continue;
       final checkpoints = a.checkpoints;
       String title;
       String? detail;
@@ -319,13 +398,34 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
       }
       events.add(_TimelineEvent(
         key: 'act-${a.id}',
-        minutes: minutes,
-        time: label,
+        minutes: since(created),
+        time: _hm(created),
+        dayLabel: dayOf(created),
         title: title,
         detail: (detail ?? '').isEmpty ? null : detail,
         icon: icon,
         tone: Tone.info,
         pending: a.isLocal,
+      ));
+    }
+
+    // Scan Patroli QR: langsung tampil begitu discan (juga yang masih menunggu sinyal), karena scan tidak
+    // membuat catatan aktivitas harian sehingga tidak muncul lewat daftar aktivitas di atas.
+    for (final s in patrolScans) {
+      if (!inWindow(s.scannedAt)) continue;
+      events.add(_TimelineEvent(
+        key: 'pq-${s.clientScanId}',
+        minutes: since(s.scannedAt),
+        time: _hm(s.scannedAt),
+        dayLabel: dayOf(s.scannedAt),
+        title: 'Patroli ${s.pointCode}',
+        detail: patrolTimelineDetail(s),
+        icon: Icons.qr_code_scanner,
+        tone: patrolTimelineTone(s.outcome.kind),
+        pending: s.outcome.kind == 'unsent',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => PatrolScanDetailScreen(item: s)),
+        ),
       ));
     }
 
@@ -335,9 +435,11 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer2<AttendanceProvider, ActivityProvider>(
-      builder: (context, attendance, activities, _) {
-        final events = _buildEvents(attendance, activities);
+    return Consumer3<AttendanceProvider, ActivityProvider, PatrolProvider>(
+      builder: (context, attendance, activities, patrol, _) {
+        final events = _buildEvents(context, attendance, activities, patrol.history);
+        final nowForTitle = DateTime.now();
+        final overnight = _windowStart(attendance, nowForTitle).isBefore(DateTime(nowForTitle.year, nowForTitle.month, nowForTitle.day));
         final loadingFirst = attendance.isLoading &&
             attendance.todayRecords.isEmpty &&
             attendance.recentAttendance.isEmpty;
@@ -351,7 +453,7 @@ class _TodayTimelineCardState extends State<TodayTimelineCard> {
                 children: [
                   Expanded(
                     child: Text(
-                      'Kegiatan hari ini',
+                      overnight ? 'Kegiatan shift ini' : 'Kegiatan hari ini',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
@@ -409,7 +511,7 @@ class _TimelineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = toneColors(event.tone);
-    return IntrinsicHeight(
+    final row = IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -417,16 +519,27 @@ class _TimelineRow extends StatelessWidget {
             width: 68,
             child: Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                event.time,
-                maxLines: 1,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: event.current ? AtenimUi.brand : AtenimUi.inkSoft,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    event.time,
+                    maxLines: 1,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: event.current ? AtenimUi.brand : AtenimUi.inkSoft,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  if (event.dayLabel != null)
+                    Text(
+                      event.dayLabel!,
+                      maxLines: 1,
+                      style: TextStyle(fontSize: 11, color: AtenimUi.inkSoft),
+                    ),
+                ],
               ),
             ),
           ),
@@ -495,6 +608,12 @@ class _TimelineRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (event.onTap == null) return row;
+    return Semantics(
+      button: true,
+      hint: 'Buka rincian',
+      child: InkWell(onTap: event.onTap, borderRadius: BorderRadius.circular(8), child: row),
     );
   }
 }

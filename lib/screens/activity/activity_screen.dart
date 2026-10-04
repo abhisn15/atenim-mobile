@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/activity_provider.dart';
+import '../../utils/checkin_gate.dart';
 import '../../providers/checkpoint_provider.dart';
 import 'activity_form_screen.dart';
 import '../team/team_tasks_screen.dart';
@@ -480,6 +481,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
   }
 
   Future<void> _openActivityFormFlow() async {
+    if (!ensureCheckedIn(context, CheckInPurpose.activity)) return;
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => const ActivityFormScreen()),
@@ -830,6 +832,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                           ? 'Isi Checkpoint'
                           : 'Tambah Aktivitas',
                       onAction: () async {
+                        if (!ensureCheckedIn(context, CheckInPurpose.activity)) return;
                         if (effectiveViewMode == 'checkpoint') {
                           await Provider.of<CheckpointProvider>(
                             context,
