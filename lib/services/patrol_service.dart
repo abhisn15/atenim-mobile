@@ -84,6 +84,23 @@ class PatrolService {
     await _writeAtomic(await _file(userId, 'pack.json'), jsonEncode(pack.toJson()));
   }
 
+  Future<List<PatrolHistoryItem>> loadCachedHistory(String userId) async {
+    try {
+      final file = await _file(userId, 'history.json');
+      if (!await file.exists()) return [];
+      final list = jsonDecode(await file.readAsString());
+      if (list is! List) return [];
+      return list.whereType<Map>().map((m) => PatrolHistoryItem.fromJson(Map<String, dynamic>.from(m))).toList();
+    } catch (e) {
+      debugPrint('[Patrol] Riwayat lokal tidak terbaca: $e');
+      return [];
+    }
+  }
+
+  Future<void> saveCachedHistory(String userId, List<Map<String, dynamic>> raw) async {
+    await _writeAtomic(await _file(userId, 'history.json'), jsonEncode(raw));
+  }
+
   Future<List<PatrolQueuedScan>> loadQueue(String userId) async {
     try {
       final file = await _file(userId, 'queue.json');
@@ -135,6 +152,21 @@ class PatrolService {
     final data = (res.data as Map)['data'];
     if (data is! Map) throw const PatrolOfflineException('Jawaban server tidak dikenali.');
     return PatrolPack.fromJson(Map<String, dynamic>.from(data), fetchedAt: DateTime.now());
+  }
+
+  /// Riwayat scan milik petugas dari server (14 hari terakhir), sudah lengkap dengan foto dan alasan.
+  Future<List<Map<String, dynamic>>> fetchHistoryRaw() async {
+    final Response res;
+    try {
+      res = await _api.get(ApiConfig.essPatrolHistory, queryParameters: {'days': 14, 'limit': 60});
+    } on DioException catch (e) {
+      throw PatrolOfflineException(e.error?.toString() ?? 'Tidak dapat terhubung ke server.');
+    }
+    final data = res.data is Map ? (res.data as Map)['data'] : null;
+    if (res.statusCode != 200 || data is! List) {
+      throw PatrolOfflineException('Riwayat patroli belum bisa dimuat (kode ${res.statusCode}).');
+    }
+    return data.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
   }
 
   Future<String> uploadPhoto(String path) async {

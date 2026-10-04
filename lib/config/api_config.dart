@@ -92,6 +92,7 @@ class ApiConfig {
   static const String essPatrolPack = '/api/ess/patrol/pack';
   static const String essPatrolSync = '/api/ess/patrol/sync';
   static const String essPatrolPhoto = '/api/ess/patrol/photo';
+  static const String essPatrolHistory = '/api/ess/patrol/history';
   static const String essPayrollSlips = '/api/ess/payroll-slips';
   static String essPayrollSlipPdf(String id) =>
       '/api/ess/payroll-slips/$id/pdf';
@@ -104,6 +105,7 @@ class ApiConfig {
   static const String leaderShiftAssignments = '/api/leader/shifts/assignments';
   static const String leaderShiftMaster = '/api/leader/shifts/master';
   static const String leaderAttendance = '/api/leader/attendance';
+  static const String attendanceAlerts = '/api/attendance-alerts';
   static const String leaderTasks = '/api/leader/tasks';
   static const String leaderCheckpointTemplates =
       '/api/leader/checkpoint-templates';

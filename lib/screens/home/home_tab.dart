@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart' as geolocator;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../providers/attendance_provider.dart';
+import '../../utils/checkin_gate.dart';
 import '../../providers/shift_provider.dart';
 import '../../providers/request_provider.dart';
 import '../../providers/auth_provider.dart';
@@ -5340,6 +5341,7 @@ class _CheckpointProgressCardState extends State<_CheckpointProgressCard> {
           color: Colors.transparent,
           child: InkWell(
             onTap: () {
+              if (!ensureCheckedIn(context, CheckInPurpose.activity)) return;
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const ActivityFormScreen()),

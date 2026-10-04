@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/attendance_alert_model.dart';
 import '../../models/shift_assignment_model.dart';
 import '../../models/shift_model.dart';
 import '../../models/team_model.dart';
@@ -9,8 +12,13 @@ import '../../providers/auth_provider.dart';
 import 'team_tasks_screen.dart';
 import 'leader_checkpoint_tasks_screen.dart';
 import '../../services/team_service.dart';
+import '../../utils/phone_contact.dart';
+import '../../utils/team_day_stats.dart';
+import '../../widgets/contact_buttons.dart';
 import '../../widgets/motion.dart';
+import '../../widgets/outside_radius_card.dart';
 import '../../widgets/shimmer_loading.dart';
+import '../../widgets/team_day_stats_card.dart';
 import '../../widgets/ui_kit.dart';
 
 class TeamScreen extends StatefulWidget {
@@ -41,6 +49,18 @@ class _TeamScreenState extends State<TeamScreen> {
   String? _selectedTeamId; // for employee team selection
   String? _manageTeamId; // for leader manage shift
 
+  // Statistik absensi anggota hari ini (khusus karyawan yang menjadi team leader), diperbarui tiap menit
+  TeamDayStats? _dayStats;
+  bool _dayStatsLoading = false;
+  String? _dayStatsError;
+  DateTime? _dayStatsAt;
+  Timer? _dayStatsTimer;
+
+  // Peringatan keluar radius 24 jam terakhir (dari /api/attendance-alerts; server membatasi ke anggota team leader ini)
+  List<AttendanceAlert>? _outsideAlerts;
+  bool _outsideLoading = false;
+  String? _outsideError;
+
   List<TeamMember> _members = [];
   List<TeamMember> _manageMembers = [];
   List<DailyShift> _shifts = [];
@@ -59,10 +79,14 @@ class _TeamScreenState extends State<TeamScreen> {
     _startDate = DateTime(now.year, now.month, 1);
     _endDate = DateTime(now.year, now.month + 1, 0);
     _loadTeamData();
+    _dayStatsTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted && _isLeader) _loadDayStats(silent: true);
+    });
   }
 
   @override
   void dispose() {
+    _dayStatsTimer?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -140,7 +164,71 @@ class _TeamScreenState extends State<TeamScreen> {
         setState(() {
           _isLoading = false;
         });
+        if (_isLeader) unawaited(_loadDayStats());
       }
+    }
+  }
+
+  /// Absensi anggota hari ini dari semua team yang dipilih. Data kemarin ikut diambil supaya shift malam
+  /// (check-in kemarin, belum pulang) dan shift malam yang belum check-in terhitung benar.
+  Future<void> _loadDayStats({bool silent = false}) async {
+    if (!_isLeader) return;
+    unawaited(_loadOutsideAlerts(silent: silent));
+    final ids = _selectedLeaderTeamIds.toList();
+    if (ids.isEmpty) {
+      if (mounted) setState(() => _dayStats = null);
+      return;
+    }
+    if (!silent && mounted) setState(() => _dayStatsLoading = true);
+    try {
+      final now = DateTime.now();
+      final start = DateTime(now.year, now.month, now.day - 1);
+      final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
+      final perTeam = await Future.wait(ids.map((id) async {
+        final assignments = await _teamService.getLeaderShiftAssignments(teamId: id, startDate: start, endDate: end);
+        final report = await _teamService.getLeaderAttendance(teamId: id, startDate: start, endDate: end, page: 1, limit: 500);
+        return (assignments, report.logs);
+      }));
+      final stats = TeamDayStats.compute(
+        now: now,
+        assignments: [for (final t in perTeam) ...t.$1],
+        logs: [for (final t in perTeam) ...t.$2],
+      );
+      if (!mounted) return;
+      setState(() {
+        _dayStats = stats;
+        _dayStatsAt = now;
+        _dayStatsLoading = false;
+        _dayStatsError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _dayStatsLoading = false;
+        // Angka lama yang masih ada tetap ditampilkan; pesan hanya muncul bila belum pernah berhasil dimuat
+        _dayStatsError = 'Statistik hari ini belum bisa dimuat. Tarik layar ke bawah untuk mencoba lagi.';
+      });
+    }
+  }
+
+  Future<void> _loadOutsideAlerts({bool silent = false}) async {
+    if (!_isLeader) return;
+    if (!silent && mounted) setState(() => _outsideLoading = true);
+    try {
+      final alerts = await _teamService.getAttendanceAlerts(hours: 24, kind: 'outside');
+      if (!mounted) return;
+      setState(() {
+        _outsideAlerts = alerts;
+        _outsideLoading = false;
+        _outsideError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _outsideLoading = false;
+        // Daftar lama yang masih ada tetap ditampilkan; pesan hanya muncul bila belum pernah berhasil dimuat
+        _outsideError = 'Daftar keluar radius belum bisa dimuat. Tarik layar ke bawah untuk mencoba lagi.';
+      });
     }
   }
 
@@ -602,24 +690,129 @@ class _TeamScreenState extends State<TeamScreen> {
     final totalMembers = _totalMembersFromBackend();
     return FadeSlideIn(
       key: const ValueKey('team-kpi'),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: _buildKpiCard(
-              label: 'Team dipimpin',
-              value: _leaderTeams.length.toString(),
-              icon: Icons.groups_outlined,
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: _buildKpiCard(
+                  label: 'Team dipimpin',
+                  value: _leaderTeams.length.toString(),
+                  icon: Icons.groups_outlined,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildKpiCard(
+                  label: 'Total anggota',
+                  value: totalMembers.toString(),
+                  icon: Icons.people_outline,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildKpiCard(
-              label: 'Total anggota',
-              value: totalMembers.toString(),
-              icon: Icons.people_outline,
+          if (_selectedLeaderTeamIds.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            TeamDayStatsCard(
+              stats: _dayStats,
+              loading: _dayStatsLoading,
+              error: _dayStatsError,
+              updatedAt: _dayStatsAt,
+              onShowAttention: _showAttentionSheet,
             ),
-          ),
+            const SizedBox(height: 12),
+            OutsideRadiusCard(
+              // Mengikuti filter team yang sedang dipilih, tanpa memuat ulang
+              people: _outsideAlerts == null
+                  ? null
+                  : groupOutsideRadius(
+                      _outsideAlerts!,
+                      onlyUserIds: _mergeLeaderMembers(_selectedLeaderTeamIds).map((m) => m.id).toSet(),
+                    ),
+              loading: _outsideLoading,
+              error: _outsideError,
+              leaderName: Provider.of<AuthProvider>(context, listen: false).user?.name ?? '',
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  String? _phoneOf(String memberId) {
+    for (final list in _leaderMembersByTeam.values) {
+      for (final m in list) {
+        if (m.id == memberId) return m.phone;
+      }
+    }
+    return null;
+  }
+
+  /// Daftar anggota yang belum check-in dan yang terlambat, dengan tombol telepon dan WhatsApp untuk menanyakan sebabnya.
+  void _showAttentionSheet() {
+    final stats = _dayStats;
+    if (stats == null) return;
+    final leaderName = Provider.of<AuthProvider>(context, listen: false).user?.name ?? '';
+
+    Widget section(String title, List<TeamDayPerson> people, ContactReason reason) {
+      if (people.isEmpty) return const SizedBox.shrink();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 4),
+            child: Text('$title (${people.length})', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+          ),
+          for (final p in people)
+            Row(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.name.isEmpty ? '-' : p.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        if ((p.shiftName ?? '').isNotEmpty)
+                          Text(p.shiftName!, style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft)),
+                        if (normalizeIndonesianPhone(_phoneOf(p.id)) == null)
+                          Text('Nomor HP belum diisi', style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft)),
+                      ],
+                    ),
+                  ),
+                ),
+                ContactButtons(phone: _phoneOf(p.id), memberName: p.name, leaderName: leaderName, reason: reason),
+              ],
+            ),
+        ],
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(sheetContext).size.height * 0.7),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Perlu dihubungi', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+                const SizedBox(height: 2),
+                Text(
+                  'Tanyakan sebabnya lewat WhatsApp atau telepon.',
+                  style: TextStyle(fontSize: 13, color: AtenimUi.inkSoft),
+                ),
+                section('Belum check-in', stats.notCheckedInPeople, ContactReason.notCheckedIn),
+                section('Terlambat', stats.latePeople, ContactReason.late),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -648,6 +841,7 @@ class _TeamScreenState extends State<TeamScreen> {
                   }
                   _members = _mergeLeaderMembers(_selectedLeaderTeamIds);
                 });
+                _loadDayStats();
               },
             ),
             const SizedBox(width: 8),
@@ -670,6 +864,7 @@ class _TeamScreenState extends State<TeamScreen> {
                       }
                       _members = _mergeLeaderMembers(_selectedLeaderTeamIds);
                     });
+                    _loadDayStats();
                   },
                 ),
               );
@@ -1885,9 +2080,20 @@ class _TeamScreenState extends State<TeamScreen> {
                     member.teamName!,
                     style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
                   ),
+                if (_isLeader && !isMe && normalizeIndonesianPhone(member.phone) != null)
+                  Text(
+                    'HP: ${member.phone}',
+                    style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+                  ),
               ],
             ),
           ),
+          if (_isLeader && !isMe)
+            ContactButtons(
+              phone: member.phone,
+              memberName: member.name,
+              leaderName: Provider.of<AuthProvider>(context, listen: false).user?.name ?? '',
+            ),
         ],
       ),
     );

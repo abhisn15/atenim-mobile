@@ -56,6 +56,9 @@ class PatrolProvider extends ChangeNotifier {
   String? _packError;
   String? _syncError;
   String? _forbiddenMessage;
+  List<PatrolHistoryItem> _serverHistory = [];
+  bool _loadingHistory = false;
+  String? _historyError;
   DateTime? _lastSyncAt;
   String? _appVersion;
 
@@ -70,6 +73,17 @@ class PatrolProvider extends ChangeNotifier {
   bool get isQrEnabled => _pack?.enabled == true && _forbiddenMessage == null;
   List<PatrolQueuedScan> get queue => List.unmodifiable(_queue);
   int get pendingCount => _queue.where((q) => q.needsSending).length;
+  bool get loadingHistory => _loadingHistory;
+
+  /// Pesan bila riwayat dari server belum bisa dimuat; HP tetap menampilkan scan yang ada di HP.
+  String? get historyError => _historyError;
+
+  /// Riwayat gabungan server + antrean HP, terbaru dulu.
+  List<PatrolHistoryItem> get history => mergePatrolHistory(
+        server: _serverHistory,
+        local: _queue,
+        pointsById: {for (final p in _pack?.points ?? const <PatrolPoint>[]) p.id: p},
+      );
 
   PatrolProvider() {
     _connSub = Connectivity().onConnectivityChanged.listen((results) {
@@ -91,6 +105,8 @@ class PatrolProvider extends ChangeNotifier {
     _userId = userId;
     _pack = null;
     _queue = [];
+    _serverHistory = [];
+    _historyError = null;
     _packError = null;
     _syncError = null;
     _forbiddenMessage = null;
@@ -101,6 +117,7 @@ class PatrolProvider extends ChangeNotifier {
     } catch (_) {}
     _pack = await _service.loadCachedPack(userId);
     _queue = await _service.loadQueue(userId);
+    _serverHistory = await _service.loadCachedHistory(userId);
     _pruneQueue();
     _initializing = false;
     notifyListeners();
@@ -111,6 +128,8 @@ class PatrolProvider extends ChangeNotifier {
     _userId = null;
     _pack = null;
     _queue = [];
+    _serverHistory = [];
+    _historyError = null;
     _retryTimer?.cancel();
     notifyListeners();
   }
@@ -119,6 +138,28 @@ class PatrolProvider extends ChangeNotifier {
   Future<void> refresh() async {
     await _fetchPack();
     await syncNow();
+    await _fetchHistory();
+  }
+
+  /// Riwayat lengkap (foto, alasan, keputusan SPV) dari server. Gagal tidak mengganggu patroli:
+  /// riwayat terakhir yang tersimpan dan scan di HP tetap tampil.
+  Future<void> _fetchHistory() async {
+    final userId = _userId;
+    if (userId == null || _loadingHistory) return;
+    _loadingHistory = true;
+    notifyListeners();
+    try {
+      final raw = await _service.fetchHistoryRaw();
+      if (_userId != userId) return;
+      _serverHistory = [for (final m in raw) PatrolHistoryItem.fromJson(m)];
+      _historyError = null;
+      await _service.saveCachedHistory(userId, raw);
+    } catch (e) {
+      _historyError = e.toString();
+    } finally {
+      _loadingHistory = false;
+      notifyListeners();
+    }
   }
 
   Future<void> _fetchPack() async {
@@ -411,7 +452,10 @@ class PatrolProvider extends ChangeNotifier {
       notifyListeners();
     }
     // Perbarui tanda "sudah dicek" dari server (termasuk scan rekan satu shift)
-    if (anyFinal) await _fetchPack();
+    if (anyFinal) {
+      await _fetchPack();
+      unawaited(_fetchHistory());
+    }
   }
 
   void _scheduleRetry() {
