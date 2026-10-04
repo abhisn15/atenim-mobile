@@ -82,6 +82,18 @@ geolocator.LocationSettings _buildLocationSettings(int intervalSeconds) {
       forceLocationManager: false, // Use default provider
     );
   }
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    // iOS tidak punya foreground service. Titik lokasi tetap mengalir saat app di latar
+    // hanya kalau stream lokasi aktif dengan izin latar diizinkan (UIBackgroundModes: location).
+    return geolocator.AppleSettings(
+      accuracy: geolocator.LocationAccuracy.high,
+      distanceFilter: 0,
+      activityType: geolocator.ActivityType.otherNavigation,
+      pauseLocationUpdatesAutomatically: false,
+      allowBackgroundLocationUpdates: true,
+      showBackgroundLocationIndicator: true,
+    );
+  }
   return const geolocator.LocationSettings(
     accuracy: geolocator.LocationAccuracy.high,
     distanceFilter: 0,

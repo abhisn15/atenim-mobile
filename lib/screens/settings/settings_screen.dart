@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:in_app_review/in_app_review.dart';
+import '../../config/store_config.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/global_update_checker.dart';
 import '../profile/profile_screen.dart';
@@ -264,7 +265,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Selalu buka halaman aplikasi di store sesuai platform.
     bool opened = false;
     try {
-      await _inAppReview.openStoreListing();
+      await _inAppReview.openStoreListing(
+        appStoreId: StoreConfig.appStoreId.isNotEmpty ? StoreConfig.appStoreId : null,
+      );
       opened = true;
     } catch (e) {
       debugPrint('[Settings] openStoreListing failed: $e');
@@ -274,7 +277,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final packageName = _packageInfo?.packageName;
       if (packageName != null && packageName.isNotEmpty) {
         if (isIOS) {
-          final webUri = Uri.parse('https://apps.apple.com/id/search?term=$packageName');
+          final webUri = StoreConfig.appStoreUri;
           try {
             opened = await launchUrl(webUri, mode: LaunchMode.externalApplication);
           } catch (_) {}

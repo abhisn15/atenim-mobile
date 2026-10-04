@@ -65,14 +65,13 @@
 		<string>fetch</string>
 		<string>processing</string>
 		<string>remote-notification</string>
-		<string>audio</string>
-		<string>bluetooth-peripheral</string>
-		<string>external-accessory</string>
-		<string>push-to-talk</string>
-		<string>bluetooth-central</string>
-		<string>nearby-interaction</string>
-		<string>voip</string>
 	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>dev.flutter.background.refresh</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
