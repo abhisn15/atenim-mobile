@@ -20,6 +20,39 @@ class AtenimUi {
   static Color get line => Colors.grey[200]!;
 }
 
+/// Kerapatan tata letak menurut tinggi layar, supaya layar pendek (iPhone SE, HP Android kecil)
+/// tidak terasa membesar. Hanya jarak, padding, dan ukuran komponen yang berubah. Skala teks
+/// pengguna tidak disentuh, dan tinggi tombol serta target sentuh tetap 48.
+/// Layar 700 pt ke atas memakai nilai bawaan aplikasi, jadi tampilannya tidak berubah.
+class AtenimDensity {
+  const AtenimDensity._(this.compact, this._height);
+
+  /// Layar lebih pendek dari ini dianggap padat (iPhone SE: 667 pt).
+  static const double compactBelowHeight = 700;
+
+  factory AtenimDensity.of(BuildContext context) {
+    final height = MediaQuery.sizeOf(context).height;
+    return AtenimDensity._(height < compactBelowHeight, height);
+  }
+
+  final bool compact;
+  final double _height;
+
+  /// Mengecilkan jarak atau padding bawaan di layar padat (x0,75), selain itu tetap.
+  double scale(double value) => compact ? value * 0.75 : value;
+
+  /// Tinggi kotak peta: 19,5% tinggi layar, antara 128 dan 190 (SE 130, iPhone 17 Pro 170).
+  double get mapHeight => (_height * 0.195).clamp(128.0, 190.0).toDouble();
+
+  /// Diameter penanda posisi pengguna di peta (logical pt).
+  double get markerSize => compact ? 32 : 40;
+
+  double get avatarRadius => compact ? 20 : 24;
+
+  /// Angka besar (mis. durasi kerja).
+  double get bigNumberSize => compact ? 24 : 28;
+}
+
 /// Nada status. Dipakai hanya untuk menandai keadaan nyata (hadir, terlambat, ditolak), bukan hiasan.
 /// Pasangan warna sudah diperiksa kontrasnya >= 4,5:1.
 enum Tone { success, warning, danger, info, neutral }
