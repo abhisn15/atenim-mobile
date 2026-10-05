@@ -28,7 +28,7 @@ class TeamScreen extends StatefulWidget {
   State<TeamScreen> createState() => _TeamScreenState();
 }
 
-class _TeamScreenState extends State<TeamScreen> {
+class _TeamScreenState extends State<TeamScreen> with WidgetsBindingObserver {
   final TeamService _teamService = TeamService();
   final bool _leaderReadOnly = true;
   final TextEditingController _searchController = TextEditingController();
@@ -79,16 +79,37 @@ class _TeamScreenState extends State<TeamScreen> {
     _startDate = DateTime(now.year, now.month, 1);
     _endDate = DateTime(now.year, now.month + 1, 0);
     _loadTeamData();
+    WidgetsBinding.instance.addObserver(this);
+    _startDayStatsTimer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _dayStatsTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Pembaruan statistik tiap menit hanya saat aplikasi terlihat. Layanan pelacakan Android menjaga proses tetap hidup
+  /// di latar belakang, jadi timer yang dibiarkan jalan akan terus menembak server (pola kebocoran request lama).
+  void _startDayStatsTimer() {
+    _dayStatsTimer?.cancel();
     _dayStatsTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted && _isLeader) _loadDayStats(silent: true);
     });
   }
 
   @override
-  void dispose() {
-    _dayStatsTimer?.cancel();
-    _searchController.dispose();
-    super.dispose();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startDayStatsTimer();
+      // Data bisa sudah basi setelah lama di latar belakang
+      if (mounted && _isLeader) _loadDayStats(silent: true);
+    } else {
+      _dayStatsTimer?.cancel();
+      _dayStatsTimer = null;
+    }
   }
 
   Future<void> _loadTeamData() async {
