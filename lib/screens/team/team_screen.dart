@@ -693,24 +693,29 @@ class _TeamScreenState extends State<TeamScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: _buildKpiCard(
-                  label: 'Team dipimpin',
-                  value: _leaderTeams.length.toString(),
-                  icon: Icons.groups_outlined,
+          // Label KPI boleh membungkus jadi dua baris di layar sempit (360 dp); IntrinsicHeight
+          // menjaga kedua kartu tetap sama tinggi.
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildKpiCard(
+                    label: 'Team dipimpin',
+                    value: _leaderTeams.length.toString(),
+                    icon: Icons.groups_outlined,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildKpiCard(
-                  label: 'Total anggota',
-                  value: totalMembers.toString(),
-                  icon: Icons.people_outline,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildKpiCard(
+                    label: 'Total anggota',
+                    value: totalMembers.toString(),
+                    icon: Icons.people_outline,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           if (_selectedLeaderTeamIds.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -2219,9 +2224,9 @@ class _TeamScreenState extends State<TeamScreen> {
                 ),
                 Text(
                   label,
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+                  style: TextStyle(fontSize: 12, height: 1.2, color: AtenimUi.inkSoft),
                 ),
               ],
             ),
