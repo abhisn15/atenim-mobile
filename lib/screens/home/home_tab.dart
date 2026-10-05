@@ -3147,45 +3147,53 @@ class _HomeTabState extends State<HomeTab>
       status = 'Selesai';
       statusColor = Colors.grey[700]!;
     }
+    final titleBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(DateTime.now()),
+          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          'Absen hari ini',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.grey[900],
+          ),
+        ),
+      ],
+    );
+    final statusPill = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: statusColor.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: statusColor,
+        ),
+      ),
+    );
+    // Skala teks besar: pil pindah ke bawah judul supaya tanggal dan judul tidak terdesak
+    // membungkus jadi banyak baris.
+    if (MediaQuery.textScalerOf(context).scale(1.0) > 1.4) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [titleBlock, const SizedBox(height: 8), statusPill],
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(DateTime.now()),
-                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Absen hari ini',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.grey[900],
-                ),
-              ),
-            ],
-          ),
-        ),
+        Expanded(child: titleBlock),
         const SizedBox(width: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: statusColor.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            status,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: statusColor,
-            ),
-          ),
-        ),
+        statusPill,
       ],
     );
   }
