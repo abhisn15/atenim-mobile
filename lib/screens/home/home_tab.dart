@@ -43,6 +43,7 @@ import '../patroli/patroli_screen.dart';
 import '../../utils/security_position.dart';
 import 'dart:io';
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -144,6 +145,10 @@ class _HomeTabState extends State<HomeTab>
   bool _isFetchingMapPosition = false;
   bool _isAutoFittingMap = false;
   bool _mapUserInteracted = false;
+  // Posisi site, pengguna, dan radius yang terakhir dipakai membingkai kamera. Rebuild beranda
+  // yang tidak mengubah ketiganya tidak boleh menganimasikan kamera lagi (patah-patah, dan
+  // melawan zoom yang baru dilakukan pengguna).
+  String? _lastFitKey;
   BitmapDescriptor? _userMarkerIcon;
   String? _userMarkerKey;
   bool _isBuildingUserMarker = false;
@@ -505,6 +510,13 @@ class _HomeTabState extends State<HomeTab>
     if (_mapUserInteracted) {
       return;
     }
+    final fitKey =
+        '${sitePosition.latitude},${sitePosition.longitude}|'
+        '${userPosition.latitude},${userPosition.longitude}|$_geofenceRadiusMeters';
+    if (fitKey == _lastFitKey) {
+      return;
+    }
+    _lastFitKey = fitKey;
     final samePoint =
         sitePosition.latitude == userPosition.latitude &&
         sitePosition.longitude == userPosition.longitude;
@@ -512,8 +524,27 @@ class _HomeTabState extends State<HomeTab>
       _animateMapToPosition(
         controller,
         sitePosition,
-        _zoomForRadius(_geofenceRadiusMeters),
+        _zoomForRadius(_geofenceRadiusMeters, sitePosition.latitude),
       );
+      return;
+    }
+    final radius = _geofenceRadiusMeters;
+    if (radius != null && radius > 0) {
+      // Bingkai memuat seluruh lingkaran radius, bukan hanya titik site dan pengguna.
+      final dLat = radius / 111320.0;
+      final dLng =
+          radius / (111320.0 * math.cos(sitePosition.latitude * math.pi / 180));
+      final bounds = _buildBounds(
+        LatLng(
+          math.min(sitePosition.latitude - dLat, userPosition.latitude),
+          math.min(sitePosition.longitude - dLng, userPosition.longitude),
+        ),
+        LatLng(
+          math.max(sitePosition.latitude + dLat, userPosition.latitude),
+          math.max(sitePosition.longitude + dLng, userPosition.longitude),
+        ),
+      );
+      _animateMapToBounds(controller, bounds, padding: 20);
       return;
     }
     final bounds = _buildBounds(sitePosition, userPosition);
@@ -522,14 +553,17 @@ class _HomeTabState extends State<HomeTab>
 
   Future<void> _animateMapToBounds(
     GoogleMapController controller,
-    LatLngBounds bounds,
-  ) async {
+    LatLngBounds bounds, {
+    double padding = 60,
+  }) async {
     if (_isMapDisposed || _appLifecycleState != AppLifecycleState.resumed) {
       return;
     }
     _isAutoFittingMap = true;
     try {
-      await controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 60));
+      await controller.animateCamera(
+        CameraUpdate.newLatLngBounds(bounds, padding),
+      );
     } catch (_) {
       // Ignore camera errors when map is not ready.
     } finally {
@@ -4092,12 +4126,24 @@ class _HomeTabState extends State<HomeTab>
     );
   }
 
-  double _zoomForRadius(int? radiusMeters) {
-    if (radiusMeters == null) return 16;
-    if (radiusMeters >= 2000) return 14;
-    if (radiusMeters >= 1000) return 15;
-    if (radiusMeters >= 500) return 15.5;
-    return 16.5;
+  /// Tinggi kotak peta (logical px). Dipakai untuk menghitung zoom lingkaran radius.
+  static const double _geofenceMapHeight = 170;
+
+  /// Zoom agar lingkaran radius memakai 80% tinggi peta (diameter = 0,8 x tinggi):
+  /// meter per piksel = 156543,03 x cos(lat) / 2^zoom, jadi
+  /// zoom = log2(156543,03 x cos(lat) x 0,4 x tinggiPx / radiusM).
+  double _zoomForRadius(int? radiusMeters, double latitude) {
+    if (radiusMeters == null || radiusMeters <= 0) return 16;
+    final zoom =
+        math.log(
+          156543.03 *
+              math.cos(latitude * math.pi / 180) *
+              0.4 *
+              _geofenceMapHeight /
+              radiusMeters,
+        ) /
+        math.ln2;
+    return zoom.clamp(10.0, 18.0).toDouble();
   }
 
   Widget _buildGeofenceMapPreview({
@@ -4171,7 +4217,7 @@ class _HomeTabState extends State<HomeTab>
     };
 
     return Container(
-      height: 170,
+      height: _geofenceMapHeight,
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
@@ -4179,10 +4225,10 @@ class _HomeTabState extends State<HomeTab>
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: GoogleMap(
+        child: _withMapControls(GoogleMap(
           initialCameraPosition: CameraPosition(
             target: target,
-            zoom: _zoomForRadius(radiusMeters),
+            zoom: _zoomForRadius(radiusMeters, target.latitude),
           ),
           onMapCreated: (controller) {
             if (_isMapDisposed) {
@@ -4206,9 +4252,9 @@ class _HomeTabState extends State<HomeTab>
           myLocationButtonEnabled: false,
           zoomControlsEnabled: false,
           compassEnabled: true,
-          rotateGesturesEnabled: true,
+          rotateGesturesEnabled: false,
           scrollGesturesEnabled: true,
-          tiltGesturesEnabled: true,
+          tiltGesturesEnabled: false,
           zoomGesturesEnabled: true,
           mapToolbarEnabled: false,
           gestureRecognizers: {
@@ -4216,8 +4262,64 @@ class _HomeTabState extends State<HomeTab>
               () => EagerGestureRecognizer(),
             ),
           },
-        ),
+        )),
       ),
+    );
+  }
+
+  /// Tombol zoom dan "pusatkan" di atas peta. Pinch di simulator butuh tombol Option dan
+  /// pengguna HP lama kadang kesulitan mencubit di kartu sekecil ini, jadi zoom tidak boleh
+  /// bergantung pada gestur saja.
+  Widget _withMapControls(Widget map) {
+    Widget button(IconData icon, String tooltip, VoidCallback onTap) {
+      return Material(
+        color: Colors.white,
+        elevation: 2,
+        shape: const CircleBorder(),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: Tooltip(
+            message: tooltip,
+            child: SizedBox(
+              width: 34,
+              height: 34,
+              child: Icon(icon, size: 20, color: Colors.grey[800]),
+            ),
+          ),
+        ),
+      );
+    }
+
+    void zoom(CameraUpdate update) {
+      final controller = _geofenceMapController;
+      if (controller == null || _isMapDisposed) return;
+      _mapUserInteracted = true;
+      controller.animateCamera(update).catchError((_) {});
+    }
+
+    return Stack(
+      children: [
+        Positioned.fill(child: map),
+        Positioned(
+          right: 8,
+          bottom: 8,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              button(Icons.my_location, 'Pusatkan', () {
+                _mapUserInteracted = false;
+                _lastFitKey = null;
+                _tryFitGeofenceCamera();
+              }),
+              const SizedBox(height: 6),
+              button(Icons.add, 'Perbesar', () => zoom(CameraUpdate.zoomIn())),
+              const SizedBox(height: 6),
+              button(Icons.remove, 'Perkecil', () => zoom(CameraUpdate.zoomOut())),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
