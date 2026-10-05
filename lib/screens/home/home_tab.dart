@@ -20,6 +20,7 @@ import '../../models/team_model.dart';
 import '../camera/camera_screen.dart';
 import '../profile/profile_screen.dart';
 import '../../widgets/shimmer_loading.dart';
+import '../../widgets/ui_kit.dart' show AtenimDensity;
 import '../../widgets/password_setup_banner.dart';
 import '../../widgets/leave_request_banner.dart';
 import '../../widgets/permission_guidance_dialog.dart';
@@ -652,6 +653,7 @@ class _HomeTabState extends State<HomeTab>
   Future<BitmapDescriptor> _createUserMarkerIcon({
     required String initials,
     required Color backgroundColor,
+    required double logicalSize,
     String? photoUrl,
   }) async {
     const size = 120.0;
@@ -715,11 +717,18 @@ class _HomeTabState extends State<HomeTab>
     if (byteData == null) {
       return BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure);
     }
-    return BitmapDescriptor.fromBytes(byteData.buffer.asUint8List());
+    // Ukuran logis eksplisit: tanpa ini bitmap tampil mengikuti pixel ratio perangkat, jadi
+    // di layar 2x (iPhone SE) lingkarannya jauh lebih besar daripada di layar 3x.
+    return BitmapDescriptor.bytes(
+      byteData.buffer.asUint8List(),
+      width: logicalSize,
+      height: logicalSize,
+    );
   }
 
   Future<void> _updateUserMarkerIcon({
     required String displayName,
+    required double logicalSize,
     String? photoUrl,
   }) async {
     if (_isMapDisposed || _appLifecycleState != AppLifecycleState.resumed) {
@@ -728,8 +737,8 @@ class _HomeTabState extends State<HomeTab>
     final initials = _getUserInitials(displayName);
     final trimmedPhotoUrl = photoUrl?.trim();
     final markerKey = (trimmedPhotoUrl != null && trimmedPhotoUrl.isNotEmpty)
-        ? 'photo:$trimmedPhotoUrl'
-        : 'initials:$initials';
+        ? 'photo:$trimmedPhotoUrl|$logicalSize'
+        : 'initials:$initials|$logicalSize';
     if (_userMarkerKey == markerKey && _userMarkerIcon != null) {
       return;
     }
@@ -744,6 +753,7 @@ class _HomeTabState extends State<HomeTab>
       final icon = await _createUserMarkerIcon(
         initials: initials,
         backgroundColor: _colorForUser(displayName),
+        logicalSize: logicalSize,
         photoUrl: trimmedPhotoUrl,
       );
       if (!mounted || _isDisposed || _isMapDisposed) {
@@ -3039,9 +3049,10 @@ class _HomeTabState extends State<HomeTab>
             !(hasCheckedIn && breakOpen);
 
         // Kartu absen hari ini: status, shift, lalu satu aksi utama (Check-In atau Check-Out)
+        final density = AtenimDensity.of(context);
         return Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          padding: const EdgeInsets.all(16),
+          margin: EdgeInsets.only(bottom: density.scale(16)),
+          padding: EdgeInsets.all(density.scale(16)),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -3054,7 +3065,7 @@ class _HomeTabState extends State<HomeTab>
                 hasCheckedIn: hasCheckedIn || dayComplete,
                 hasCheckedOut: hasCheckedOut || dayComplete,
               ),
-              const SizedBox(height: 12),
+              SizedBox(height: density.scale(12)),
               if (dayComplete)
                 _buildWorkingTimeBlock(
                   attendanceProvider,
@@ -3069,7 +3080,7 @@ class _HomeTabState extends State<HomeTab>
                 )
               else if (!offDayPendingCheckout)
                 _buildShiftSelectionInCard(context),
-              const SizedBox(height: 16),
+              SizedBox(height: density.scale(16)),
               if (offDayPendingCheckout)
                 _buildDisabledCheckInButton(
                   context,
@@ -3095,10 +3106,10 @@ class _HomeTabState extends State<HomeTab>
                 _buildQrAttendanceButton(checkOut: hasCheckedIn),
               ],
               if (!hasCheckedOut && !offDayPendingCheckout && !dayComplete) ...[
-                const SizedBox(height: 14),
+                SizedBox(height: density.scale(14)),
                 _buildGeofenceHint(context, forCheckOut: hasCheckedIn),
               ],
-              const SizedBox(height: 12),
+              SizedBox(height: density.scale(12)),
               const _CheckpointProgressCard(),
               // Rincian shift hanya saat bekerja atau bila shift lebih dari satu (tidak mengulang info)
               if (hasCheckedIn || totalShiftCount > 1) ...[
@@ -3223,7 +3234,7 @@ class _HomeTabState extends State<HomeTab>
               return Text(
                 value,
                 style: TextStyle(
-                  fontSize: 28,
+                  fontSize: AtenimDensity.of(context).bigNumberSize,
                   fontWeight: FontWeight.w700,
                   color: Colors.grey[900],
                   fontFeatures: const [ui.FontFeature.tabularFigures()],
@@ -4126,8 +4137,8 @@ class _HomeTabState extends State<HomeTab>
     );
   }
 
-  /// Tinggi kotak peta (logical px). Dipakai untuk menghitung zoom lingkaran radius.
-  static const double _geofenceMapHeight = 170;
+  /// Tinggi kotak peta terakhir (logical px), mengikuti tinggi layar. Dipakai untuk menghitung zoom lingkaran radius.
+  double _geofenceMapHeightPx = 170;
 
   /// Zoom agar lingkaran radius memakai 80% tinggi peta (diameter = 0,8 x tinggi):
   /// meter per piksel = 156543,03 x cos(lat) / 2^zoom, jadi
@@ -4139,7 +4150,7 @@ class _HomeTabState extends State<HomeTab>
           156543.03 *
               math.cos(latitude * math.pi / 180) *
               0.4 *
-              _geofenceMapHeight /
+              _geofenceMapHeightPx /
               radiusMeters,
         ) /
         math.ln2;
@@ -4155,6 +4166,9 @@ class _HomeTabState extends State<HomeTab>
     String? userPhotoUrl,
   }) {
     final target = LatLng(latitude, longitude);
+    final density = AtenimDensity.of(context);
+    final mapHeight = density.mapHeight;
+    _geofenceMapHeightPx = mapHeight;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           _isDisposed ||
@@ -4176,7 +4190,11 @@ class _HomeTabState extends State<HomeTab>
       final safeUserName = (userName != null && userName.trim().isNotEmpty)
           ? userName.trim()
           : 'User';
-      _updateUserMarkerIcon(displayName: safeUserName, photoUrl: userPhotoUrl);
+      _updateUserMarkerIcon(
+        displayName: safeUserName,
+        photoUrl: userPhotoUrl,
+        logicalSize: density.markerSize,
+      );
       _tryFitGeofenceCamera();
     });
     final displayName = (siteName != null && siteName.trim().isNotEmpty)
@@ -4217,7 +4235,7 @@ class _HomeTabState extends State<HomeTab>
     };
 
     return Container(
-      height: _geofenceMapHeight,
+      height: mapHeight,
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
@@ -5114,7 +5132,7 @@ class _HomeTabState extends State<HomeTab>
                     ],
                   ),
                   child: CircleAvatar(
-                    radius: 24,
+                    radius: AtenimDensity.of(context).avatarRadius,
                     backgroundColor: Colors.white,
                     backgroundImage: user.photoUrl != null
                         ? NetworkImage(ApiConfig.getImageUrl(user.photoUrl!))
@@ -5248,6 +5266,7 @@ class _HomeTabState extends State<HomeTab>
 
   @override
   Widget build(BuildContext context) {
+    final density = AtenimDensity.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF6F7F9),
       appBar: AppBar(
@@ -5308,7 +5327,7 @@ class _HomeTabState extends State<HomeTab>
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(density.scale(16)),
           children: [
             // Password Setup Banner (jika user belum punya password atau masih pakai password default)
             Consumer<AuthProvider>(
@@ -5363,7 +5382,7 @@ class _HomeTabState extends State<HomeTab>
               },
             ),
 
-            const SizedBox(height: 20),
+            SizedBox(height: density.scale(20)),
 
             // Rekap kehadiran bulan ini
             Consumer<AttendanceProvider>(
@@ -5383,12 +5402,12 @@ class _HomeTabState extends State<HomeTab>
                 );
               },
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: density.scale(16)),
             // Kegiatan hari ini (check-in, istirahat, aktivitas, check-out) tepat di bawah KPI kehadiran
             TodayTimelineCard(
               onSeeActivities: () => Navigator.pushNamed(context, '/activity'),
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: density.scale(16)),
             Consumer<AttendanceProvider>(
               builder: (context, attendanceProvider, _) =>
                   _buildRecentHistoryCard(context, attendanceProvider),
