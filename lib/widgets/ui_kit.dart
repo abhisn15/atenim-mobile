@@ -122,13 +122,17 @@ class StatusPill extends StatelessWidget {
             Icon(icon, size: 14, color: colors.fg),
             const SizedBox(width: 4),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              color: colors.fg,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colors.fg,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
             ),
           ),
         ],
@@ -175,6 +179,7 @@ class EmptyState extends StatelessWidget {
     required this.message,
     this.actionLabel,
     this.onAction,
+    this.compact = false,
   });
 
   final IconData icon;
@@ -183,28 +188,34 @@ class EmptyState extends StatelessWidget {
   final String? actionLabel;
   final VoidCallback? onAction;
 
+  /// Versi ringkas untuk di dalam kartu: padding dan ikon lebih kecil.
+  final bool compact;
+
   @override
   Widget build(BuildContext context) {
+    final badge = compact ? 52.0 : 64.0;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      padding: compact
+          ? const EdgeInsets.symmetric(horizontal: 20, vertical: 20)
+          : const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 64,
-            height: 64,
+            width: badge,
+            height: badge,
             decoration: BoxDecoration(
               color: AtenimUi.brandSoft,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, size: 30, color: AtenimUi.brand),
+            child: Icon(icon, size: compact ? 26 : 30, color: AtenimUi.brand),
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 12 : 16),
           Text(
             title,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 17,
+              fontSize: compact ? 16 : 17,
               fontWeight: FontWeight.w700,
               color: AtenimUi.ink,
             ),

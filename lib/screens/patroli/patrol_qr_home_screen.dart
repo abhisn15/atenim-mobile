@@ -11,6 +11,7 @@ import '../../utils/home_tab_request.dart';
 import 'patrol_point_check_screen.dart';
 import 'patrol_scan_detail_screen.dart';
 import 'patrol_scanner_screen.dart';
+import '../../widgets/ui_kit.dart';
 
 final _hm = DateFormat('HH.mm', 'id_ID');
 
@@ -233,28 +234,31 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
                 else
                   _RoundCard(provider: p, round: round, now: now),
                 if (round != null) ...[
-                  const SizedBox(height: 20),
-                  Text('Titik di ronde ${_window(round)}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 8),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Column(
-                      children: [
-                        for (final point in p.pointsOfRound(round))
-                          _PointTile(
-                            point: point,
-                            progress: p.progressOf(round, point.id),
-                            optional: !p.isRequiredIn(round, point.id),
-                            onTap: () => _openPoint(p, round, point),
-                          ),
-                      ],
+                  const SizedBox(height: 16),
+                  SectionHeader(title: 'Titik di ronde ${_window(round)}'),
+                  AtenimCard(
+                    padding: EdgeInsets.zero,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(AtenimUi.radiusCard),
+                      child: Column(
+                        children: [
+                          for (final (i, point) in p.pointsOfRound(round).indexed) ...[
+                            if (i > 0) Divider(height: 1, indent: 68, color: AtenimUi.line),
+                            _PointTile(
+                              point: point,
+                              progress: p.progressOf(round, point.id),
+                              optional: !p.isRequiredIn(round, point.id),
+                              onTap: () => _openPoint(p, round, point),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ),
                 ],
                 if (visible.length > 1) ...[
-                  const SizedBox(height: 20),
-                  const Text('Ronde lain di shift ini', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 16),
+                  const SectionHeader(title: 'Ronde lain di shift ini'),
                   for (final r in visible)
                     if (r.id != round?.id)
                       _RoundChip(
@@ -264,7 +268,7 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
                         onTap: () => setState(() => _selectedRoundId = r.id),
                       ),
                 ],
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
                 _HistorySection(items: p.history, error: p.historyError),
               ],
             ),
@@ -299,46 +303,51 @@ class _SyncBanner extends StatelessWidget {
     if (pending == 0) {
       return Row(
         children: [
-          Icon(Icons.cloud_done_outlined, size: 18, color: Colors.green[800]),
+          const StatusPill(label: 'Semua scan terkirim', tone: Tone.success, icon: Icons.cloud_done_outlined),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Semua scan terkirim · $updated${provider.packError != null ? ' (belum bisa diperbarui)' : ''}',
-              style: TextStyle(color: Colors.grey[800], fontSize: 13),
+              '$updated${provider.packError != null ? ' (belum bisa diperbarui)' : ''}',
+              style: TextStyle(color: AtenimUi.inkSoft, fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
       );
     }
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.amber[50],
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.amber[300]!),
-      ),
+    final warn = toneColors(Tone.warning);
+    return AtenimCard(
+      color: warn.bg,
+      borderColor: warn.fg.withValues(alpha: 0.25),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
       child: Row(
         children: [
-          Icon(Icons.cloud_upload_outlined, color: Colors.brown[700]),
+          Icon(Icons.cloud_upload_outlined, color: warn.fg),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('$pending scan tersimpan di HP, belum terkirim',
-                    style: TextStyle(fontWeight: FontWeight.w600, color: Colors.brown[800])),
+                Text('${provider.pendingCount} scan tersimpan di HP, belum terkirim',
+                    style: TextStyle(fontWeight: FontWeight.w700, color: warn.fg)),
+                const SizedBox(height: 2),
                 Text(
                   provider.syncing
                       ? 'Sedang mengirim...'
                       : provider.syncError != null
                           ? 'Belum ada sinyal ke server. Terkirim otomatis saat sinyal kembali.'
                           : 'Terkirim otomatis saat ada sinyal.',
-                  style: TextStyle(color: Colors.grey[900], fontSize: 13),
+                  style: TextStyle(color: AtenimUi.inkSoft, fontSize: 13, height: 1.3),
                 ),
               ],
             ),
           ),
-          TextButton(onPressed: provider.syncing ? null : provider.syncNow, child: const Text('Kirim')),
+          TextButton(
+            onPressed: provider.syncing ? null : provider.syncNow,
+            style: TextButton.styleFrom(minimumSize: const Size(56, 48)),
+            child: const Text('Kirim'),
+          ),
         ],
       ),
     );
@@ -350,15 +359,14 @@ class _NoRoundCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: const Text(
-        'Belum ada ronde terjadwal di sekitar jam ini. Scan tetap bisa dilakukan dan tercatat sebagai patroli tambahan.',
-        style: TextStyle(height: 1.4),
+    return const AtenimCard(
+      padding: EdgeInsets.zero,
+      child: EmptyState(
+        compact: true,
+        icon: Icons.event_available_outlined,
+        title: 'Belum ada ronde saat ini',
+        message:
+            'Tidak ada ronde terjadwal di sekitar jam ini. Anda tetap bisa scan titik; hasilnya tercatat sebagai patroli tambahan.',
       ),
     );
   }
@@ -376,55 +384,75 @@ class _RoundCard extends StatelessWidget {
     final (done, total) = provider.countOf(round);
     final route = provider.pack?.routeById(round.routeId);
     final String timing;
-    final Color tone;
+    final Tone tone;
     if (now.isBefore(round.windowStart)) {
-      timing = 'Mulai ${_hm.format(round.windowStart)} (${_duration(round.windowStart.difference(now))} lagi)';
-      tone = Colors.blueGrey[700]!;
+      timing = 'Mulai ${_hm.format(round.windowStart)} · ${_duration(round.windowStart.difference(now))} lagi';
+      tone = Tone.neutral;
     } else if (!now.isAfter(round.windowEnd)) {
-      timing = 'Berjalan, sisa ${_duration(round.windowEnd.difference(now))}';
-      tone = Colors.blue[800]!;
+      timing = 'Berjalan · sisa ${_duration(round.windowEnd.difference(now))}';
+      tone = Tone.info;
     } else {
       timing = 'Jendela ronde sudah lewat';
-      tone = Colors.grey[800]!;
+      tone = Tone.neutral;
     }
     final complete = total > 0 && done >= total;
-    return Container(
+    const ring = 76.0;
+    final accent = complete ? Colors.green[600]! : AtenimUi.brand;
+    return AtenimCard(
+      color: complete ? Colors.green[50] : Colors.white,
+      borderColor: complete ? Colors.green[200] : null,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: complete ? Colors.green[50] : Colors.blue[50],
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: complete ? Colors.green[200]! : Colors.blue[100]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Text(route?.name ?? 'Ronde', style: TextStyle(color: Colors.grey[800], fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text('Ronde ${_window(round)}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 2),
-          Text(timing, style: TextStyle(color: tone, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: LinearProgressIndicator(
+          SizedBox(
+            width: ring,
+            height: ring,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                SizedBox.expand(
+                  child: CircularProgressIndicator(
                     value: total == 0 ? 0 : done / total,
-                    minHeight: 10,
-                    backgroundColor: Colors.white,
-                    color: complete ? Colors.green[600] : Colors.blue[700],
+                    strokeWidth: 7,
+                    strokeCap: StrokeCap.round,
+                    backgroundColor: complete ? Colors.white : AtenimUi.brandSoft,
+                    color: accent,
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Text('$done/$total titik', style: const TextStyle(fontWeight: FontWeight.w700)),
-            ],
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$done/$total',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AtenimUi.ink)),
+                    Text('titik', style: TextStyle(fontSize: 11, color: AtenimUi.inkSoft)),
+                  ],
+                ),
+              ],
+            ),
           ),
-          if (complete) ...[
-            const SizedBox(height: 8),
-            Text('Semua titik wajib sudah dicek.', style: TextStyle(color: Colors.green[800])),
-          ],
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  route?.name ?? 'Ronde',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AtenimUi.inkSoft, fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+                const SizedBox(height: 2),
+                Text('Ronde ${_window(round)}',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AtenimUi.ink)),
+                const SizedBox(height: 8),
+                if (complete)
+                  const StatusPill(label: 'Semua titik wajib sudah dicek', tone: Tone.success, icon: Icons.check_circle_outline)
+                else
+                  StatusPill(label: timing, tone: tone, icon: Icons.schedule),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -490,20 +518,50 @@ class _PointTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final v = _stateVisual(progress);
     final place = point.placeLabel;
-    return ListTile(
+    return InkWell(
       onTap: onTap,
-      minTileHeight: 64,
-      leading: Icon(v.icon, color: v.color, size: 28),
-      title: Text('${point.code} · ${point.name}', style: const TextStyle(fontWeight: FontWeight.w600)),
-      subtitle: Text(
-        [
-          v.label,
-          if (place.isNotEmpty) place,
-          if (optional) 'opsional',
-          if (point.isCritical) 'kritis',
-        ].join(' · '),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 64),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: v.color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                child: Icon(v.icon, color: v.color, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${point.code} · ${point.name}',
+                        style: TextStyle(fontWeight: FontWeight.w700, color: AtenimUi.ink)),
+                    const SizedBox(height: 2),
+                    Text(v.label, style: TextStyle(color: v.color, fontSize: 13, fontWeight: FontWeight.w600)),
+                    if (place.isNotEmpty)
+                      Text(place, style: TextStyle(color: AtenimUi.inkSoft, fontSize: 12)),
+                    if (optional || point.isCritical) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          if (point.isCritical) const StatusPill(label: 'Kritis', tone: Tone.danger),
+                          if (optional) const StatusPill(label: 'Opsional', tone: Tone.neutral),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey[500]),
+            ],
+          ),
+        ),
       ),
-      trailing: const Icon(Icons.chevron_right),
     );
   }
 }
@@ -520,18 +578,39 @@ class _RoundChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final (done, total) = provider.countOf(round);
     final route = provider.pack?.routeById(round.routeId);
+    final running = !now.isBefore(round.windowStart) && !now.isAfter(round.windowEnd);
     final String when = now.isBefore(round.windowStart)
-        ? 'belum mulai'
+        ? 'Belum mulai'
         : now.isAfter(round.windowEnd)
-            ? 'sudah lewat'
-            : 'berjalan';
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
+            ? 'Sudah lewat'
+            : 'Berjalan';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AtenimCard(
         onTap: onTap,
-        title: Text('${_window(round)} · ${route?.name ?? ''}'),
-        subtitle: Text('$when · $done/$total titik'),
-        trailing: const Icon(Icons.chevron_right),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${_window(round)} · ${route?.name ?? ''}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w700, color: AtenimUi.ink)),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      StatusPill(label: when, tone: running ? Tone.info : Tone.neutral),
+                      const SizedBox(width: 8),
+                      Text('$done/$total titik', style: TextStyle(color: AtenimUi.inkSoft, fontSize: 13)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.grey[500]),
+          ],
+        ),
       ),
     );
   }
@@ -549,11 +628,13 @@ class _HistorySection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Riwayat scan saya', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-        const SizedBox(height: 2),
-        Text(
-          'Ketuk satu scan untuk melihat foto, hasil penilaian, dan alasannya.',
-          style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+        const SectionHeader(title: 'Riwayat scan saya'),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'Ketuk satu scan untuk melihat foto, hasil penilaian, dan alasannya.',
+            style: TextStyle(fontSize: 12, color: AtenimUi.inkSoft),
+          ),
         ),
         if (error != null && onlyOnPhone) ...[
           const SizedBox(height: 6),
@@ -564,7 +645,15 @@ class _HistorySection extends StatelessWidget {
         ],
         const SizedBox(height: 8),
         if (items.isEmpty)
-          Text('Belum ada scan.', style: TextStyle(color: Colors.grey[800]))
+          const AtenimCard(
+            padding: EdgeInsets.zero,
+            child: EmptyState(
+              compact: true,
+              icon: Icons.qr_code_scanner,
+              title: 'Belum ada scan',
+              message: 'Scan stiker titik patroli yang pertama. Riwayat dan hasil penilaiannya muncul di sini.',
+            ),
+          )
         else
           Card(
             margin: EdgeInsets.zero,
