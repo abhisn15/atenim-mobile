@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../models/patrol_models.dart';
 import '../../providers/patrol_provider.dart';
 import '../../utils/checkin_gate.dart';
+import '../../utils/home_tab_request.dart';
 import 'patrol_point_check_screen.dart';
 import 'patrol_scan_detail_screen.dart';
 import 'patrol_scanner_screen.dart';
@@ -67,7 +68,11 @@ class _PatrolQrHomeScreenState extends State<PatrolQrHomeScreen> {
   bool _ensureCheckedIn() => ensureCheckedIn(
         context,
         CheckInPurpose.patrol,
-        onGoHome: () => Navigator.of(context).popUntil((route) => route.isFirst),
+        onGoHome: () {
+          // Tutup layar yang di-push di atas beranda (mis. scanner), lalu pindah ke tab Home.
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          HomeTabRequest.goHome();
+        },
       );
 
   Future<void> _startScan({PatrolPoint? expected}) async {
