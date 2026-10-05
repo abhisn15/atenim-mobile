@@ -7,6 +7,7 @@ import '../../providers/activity_provider.dart';
 import '../../models/activity_model.dart';
 import '../../config/api_config.dart';
 import '../../widgets/adaptive_image.dart';
+import '../../widgets/ui_kit.dart' show EmptyState;
 import 'patroli_form_screen.dart';
 
 class PatroliListScreen extends StatefulWidget {
@@ -119,6 +120,19 @@ class _PatroliListScreenState extends State<PatroliListScreen> {
     }
   }
 
+  void _openForm() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const PatroliFormScreen(),
+      ),
+    ).then((_) {
+      // Refresh list after form submission
+      if (!mounted) return;
+      Provider.of<ActivityProvider>(context, listen: false).loadActivities();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,17 +141,7 @@ class _PatroliListScreenState extends State<PatroliListScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PatroliFormScreen(),
-                ),
-              ).then((_) {
-                // Refresh list after form submission
-                Provider.of<ActivityProvider>(context, listen: false).loadActivities();
-              });
-            },
+            onPressed: _openForm,
             tooltip: 'Tambah Patroli',
           ),
         ],
@@ -263,22 +267,15 @@ class _PatroliListScreenState extends State<PatroliListScreen> {
 
                 if (patroliList.isEmpty) {
                   return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.security, size: 64, color: Colors.grey[400]),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Belum ada laporan patroli',
-                          style: TextStyle(color: Colors.grey[600]),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Tekan tombol + untuk membuat laporan patroli baru',
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                    child: SingleChildScrollView(
+                      child: EmptyState(
+                        icon: Icons.shield_outlined,
+                        title: 'Belum ada laporan patroli',
+                        message:
+                            'Laporan patroli pada rentang tanggal ini akan muncul di sini. Buat laporan pertama setelah Anda berkeliling.',
+                        actionLabel: 'Buat laporan patroli',
+                        onAction: _openForm,
+                      ),
                     ),
                   );
                 }
