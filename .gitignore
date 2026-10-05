@@ -61,6 +61,11 @@ app.*.map.json
 # Salin dari Firebase Console ke google-services.json secara lokal / CI secret.
 android/app/google-services.json
 
+# Firebase iOS dan kunci Google Maps iOS — hanya lokal / CI secret.
+# Contoh ada di GoogleService-Info.plist.example dan Secrets.xcconfig.example.
+ios/Runner/GoogleService-Info.plist
+ios/Flutter/Secrets.xcconfig
+
 # Android Keystore - JANGAN commit keystore dan key.properties!
 *.jks
 *.keystore

@@ -70,6 +70,8 @@
 	<array>
 		<string>dev.flutter.background.refresh</string>
 	</array>
+	<key>GMSApiKey</key>
+	<string>$(GMS_API_KEY)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UILaunchStoryboardName</key>
