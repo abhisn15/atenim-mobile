@@ -269,13 +269,18 @@ class _LeaderCheckpointTasksScreenState
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: selectedTeamId == 'all' ? null : selectedTeamId,
                     decoration: const InputDecoration(labelText: 'Team'),
                     items: widget.teams
                         .map(
                           (team) => DropdownMenuItem<String>(
                             value: team.id,
-                            child: Text(team.name),
+                            child: Text(
+                              team.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
@@ -396,6 +401,7 @@ class _LeaderCheckpointTasksScreenState
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     value: selectedTemplate?.id,
                     decoration: const InputDecoration(
                       labelText: 'Template checkpoint',
@@ -404,7 +410,11 @@ class _LeaderCheckpointTasksScreenState
                         .map(
                           (template) => DropdownMenuItem<String>(
                             value: template.id,
-                            child: Text(template.name),
+                            child: Text(
+                              template.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
                         )
                         .toList(),
