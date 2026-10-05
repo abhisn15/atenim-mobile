@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../widgets/ui_kit.dart' show EmptyState;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -148,9 +149,28 @@ class _PayrollSlipsScreenState extends State<PayrollSlipsScreen> {
     await _loadPayrollSlips(targetPage: 1);
   }
 
+  static bool _isMaintenanceMessage(String message) {
+    final m = message.toLowerCase();
+    return m.contains('perbaikan') || m.contains('maintenance');
+  }
+
   Widget _buildBody() {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null && _isMaintenanceMessage(_error!)) {
+      // Layanan sedang diperbaiki: ini keadaan yang diketahui, bukan galat, jadi tampil netral
+      // tanpa tombol Coba Lagi (mengulang tidak akan mengubah apa pun).
+      return Center(
+        child: SingleChildScrollView(
+          child: EmptyState(
+            icon: Icons.construction_outlined,
+            title: 'Slip gaji belum tersedia',
+            message: _error!,
+          ),
+        ),
+      );
     }
 
     if (_error != null) {
