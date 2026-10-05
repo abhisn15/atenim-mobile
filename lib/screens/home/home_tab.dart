@@ -4251,7 +4251,7 @@ class _HomeTabState extends State<HomeTab>
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(10),
-        child: _withMapControls(GoogleMap(
+        child: _withMapControls(compact: density.compact, GoogleMap(
           initialCameraPosition: CameraPosition(
             target: target,
             zoom: _zoomForRadius(radiusMeters, target.latitude),
@@ -4295,22 +4295,29 @@ class _HomeTabState extends State<HomeTab>
 
   /// Tombol zoom dan "pusatkan" di atas peta. Pinch di simulator butuh tombol Option dan
   /// pengguna HP lama kadang kesulitan mencubit di kartu sekecil ini, jadi zoom tidak boleh
-  /// bergantung pada gestur saja.
-  Widget _withMapControls(Widget map) {
+  /// bergantung pada gestur saja. Tampilan bulatnya 34 dp, area ketuknya 48 dp. Di layar
+  /// padat tombol "pusatkan" disembunyikan: tiga area 48 dp tidak muat di peta setinggi ~130 dp.
+  Widget _withMapControls(Widget map, {required bool compact}) {
     Widget button(IconData icon, String tooltip, VoidCallback onTap) {
-      return Material(
-        color: Colors.white,
-        elevation: 2,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
+      return Tooltip(
+        message: tooltip,
+        child: InkResponse(
           onTap: onTap,
-          child: Tooltip(
-            message: tooltip,
-            child: SizedBox(
-              width: 34,
-              height: 34,
-              child: Icon(icon, size: 20, color: Colors.grey[800]),
+          radius: 24,
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: Material(
+                color: Colors.white,
+                elevation: 2,
+                shape: const CircleBorder(),
+                child: SizedBox(
+                  width: 34,
+                  height: 34,
+                  child: Icon(icon, size: 20, color: Colors.grey[800]),
+                ),
+              ),
             ),
           ),
         ),
@@ -4328,19 +4335,18 @@ class _HomeTabState extends State<HomeTab>
       children: [
         Positioned.fill(child: map),
         Positioned(
-          right: 8,
-          bottom: 8,
+          right: 1,
+          bottom: 1,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              button(Icons.my_location, 'Pusatkan', () {
-                _mapUserInteracted = false;
-                _lastFitKey = null;
-                _tryFitGeofenceCamera();
-              }),
-              const SizedBox(height: 6),
+              if (!compact)
+                button(Icons.my_location, 'Pusatkan', () {
+                  _mapUserInteracted = false;
+                  _lastFitKey = null;
+                  _tryFitGeofenceCamera();
+                }),
               button(Icons.add, 'Perbesar', () => zoom(CameraUpdate.zoomIn())),
-              const SizedBox(height: 6),
               button(Icons.remove, 'Perkecil', () => zoom(CameraUpdate.zoomOut())),
             ],
           ),
