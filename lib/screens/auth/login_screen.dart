@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../home/home_screen.dart';
@@ -37,6 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
     );
 
     if (success && mounted) {
+      // Login berhasil: minta sistem menawarkan penyimpanan akun + sandi.
+      TextInput.finishAutofillContext();
       final user = authProvider.user;
       final needsPasswordSetup =
           (user?.hasPassword == false) || (user?.needsPasswordChange == true);
@@ -59,6 +62,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Kolom akun + sandi disatukan dalam satu sesi autofill supaya pengelola sandi bawaan HP
+    // (Google, Samsung Pass, Bitwarden, iCloud Keychain) bisa menawarkan "Simpan" dan mengisi
+    // otomatis. Sandi tidak disimpan oleh aplikasi ini. "cancel" saat layar dibuang: tidak ada
+    // yang disimpan kalau pengguna keluar tanpa login berhasil.
+    return AutofillGroup(
+      onDisposeAction: AutofillContextAction.cancel,
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         child: Consumer<AuthProvider>(
@@ -109,6 +123,10 @@ class _LoginScreenState extends State<LoginScreen> {
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.text,
+                      // "username" (bukan "email"): kolom ini juga menerima NIK, dan apa pun
+                      // yang diketik akan disimpan & diisi ulang apa adanya.
+                      autofillHints: const [AutofillHints.username],
+                      autocorrect: false,
                       decoration: InputDecoration(
                         labelText: 'Email atau NIK KTP',
                         hintText: 'contoh: user@email.com atau 3172xxxxxxxxxxxx (16 digit)',
@@ -148,6 +166,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
+                      autofillHints: const [AutofillHints.password],
                       decoration: InputDecoration(
                         labelText: 'Password',
                         prefixIcon: const Icon(Icons.lock_outlined),
