@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'dart:io';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
@@ -875,54 +874,43 @@ class _ActivityScreenState extends State<ActivityScreen> {
                   child: Column(
                     children: [
                       Expanded(
-                        child: NotificationListener<UserScrollNotification>(
-                          onNotification: (notification) {
-                            if (notification.direction != ScrollDirection.idle &&
-                                _expandedActivityId != null) {
-                              setState(() {
-                                _expandedActivityId = null;
-                              });
-                            }
-                            return false;
-                          },
-                          child: ListView(
-                            padding: const EdgeInsets.all(16),
-                            children: [
-                              if (paginatedToday != null) ...[
-                                FadeSlideIn(
-                                  key: ValueKey('act-${paginatedToday.id}'),
-                                  child: _buildActivityCard(
-                                    context,
-                                    paginatedToday,
-                                    isToday: true,
-                                  ),
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            if (paginatedToday != null) ...[
+                              FadeSlideIn(
+                                key: ValueKey('act-${paginatedToday.id}'),
+                                child: _buildActivityCard(
+                                  context,
+                                  paginatedToday,
+                                  isToday: true,
                                 ),
-                                const SizedBox(height: 16),
-                              ],
-                              if (paginatedRecent.isNotEmpty) ...[
-                                Text(
-                                  effectiveViewMode == 'checkpoint'
-                                      ? 'Riwayat Checkpoint'
-                                      : 'Riwayat',
-                                  style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 8),
-                                for (var i = 0; i < paginatedRecent.length; i++)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: FadeSlideIn(
-                                      key: ValueKey('act-${paginatedRecent[i].id}'),
-                                      delay: Motion.stagger(i + 1),
-                                      child: _buildActivityCard(
-                                        context,
-                                        paginatedRecent[i],
-                                      ),
+                              ),
+                              const SizedBox(height: 16),
+                            ],
+                            if (paginatedRecent.isNotEmpty) ...[
+                              Text(
+                                effectiveViewMode == 'checkpoint'
+                                    ? 'Riwayat Checkpoint'
+                                    : 'Riwayat',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 8),
+                              for (var i = 0; i < paginatedRecent.length; i++)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: FadeSlideIn(
+                                    key: ValueKey('act-${paginatedRecent[i].id}'),
+                                    delay: Motion.stagger(i + 1),
+                                    child: _buildActivityCard(
+                                      context,
+                                      paginatedRecent[i],
                                     ),
                                   ),
-                              ],
+                                ),
                             ],
-                          ),
+                          ],
                         ),
                       ),
                       // Pagination (always show if more than itemsPerPage)
