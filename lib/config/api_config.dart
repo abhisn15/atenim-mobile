@@ -3,8 +3,11 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class ApiConfig {
   // Load from environment variables
   // Default values for development if .env is not loaded
+  // Build khusus (mis. APK "Atenim Dev"): `--dart-define=API_BASE_URL=https://...` menang atas .env.
+  static const String _definedBaseUrl = String.fromEnvironment('API_BASE_URL');
+
   static String get baseUrl {
-    final envUrl = dotenv.env['API_BASE_URL'];
+    final envUrl = _definedBaseUrl.isNotEmpty ? _definedBaseUrl : dotenv.env['API_BASE_URL'];
 
     if (envUrl != null && envUrl.isNotEmpty) {
       // Remove trailing slash if exists

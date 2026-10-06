@@ -18,7 +18,11 @@ val hasFirebaseAndroidConfig = try {
 } catch (_: Exception) {
     false
 }
-if (hasFirebaseAndroidConfig) {
+// Build "Atenim Dev" (ATENIM_DEV=1): paket com.atenim.dev, label "Atenim Dev", terpasang berdampingan
+// dengan app asli. google-services.json hanya berisi klien com.atenim, jadi plugin dilewati
+// (push mati di build ini; app sudah menangani Firebase yang belum siap).
+val isDevBuild = System.getenv("ATENIM_DEV") == "1"
+if (hasFirebaseAndroidConfig && !isDevBuild) {
     apply(plugin = "com.google.gms.google-services")
 }
 
@@ -77,6 +81,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["MAPS_API_KEY"] = envProperties.getProperty("GOOGLE_MAPS_API_KEY") ?: ""
+        manifestPlaceholders["appLabel"] = if (isDevBuild) "Atenim Dev" else "Atenim"
+        if (isDevBuild) {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
     }
 
     signingConfigs {
