@@ -43,6 +43,21 @@ class PushNotificationService {
     importance: Importance.high,
   );
 
+  /// Alarm untuk team leader saat anggota belum check-out. Nama channel dan suara (res/raw/alarm_long.wav, 30 detik)
+  /// harus sama dengan yang dikirim server (lib/firebase-admin.ts: androidConfigFor). Android menentukan suara dari
+  /// channel, jadi channel ini harus sudah dibuat di HP sebelum pesan pertama tiba; dibuat saat aplikasi dibuka.
+  static final _alarmChannel = AndroidNotificationChannel(
+    'atenim_alarm',
+    'Alarm kehadiran',
+    description: 'Alarm bila ada anggota team yang belum check-out',
+    importance: Importance.max,
+    playSound: true,
+    sound: const RawResourceAndroidNotificationSound('alarm_long'),
+    audioAttributesUsage: AudioAttributesUsage.alarm,
+    enableVibration: true,
+    vibrationPattern: Int64List.fromList([0, 800, 400, 800, 400, 800, 400, 800]),
+  );
+
   static Future<void> initialize() async {
     if (_initialized) return;
 
@@ -106,6 +121,7 @@ class PushNotificationService {
           _localNotifications.resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(_androidChannel);
+      await androidPlugin?.createNotificationChannel(_alarmChannel);
     }
   }
 
@@ -131,6 +147,7 @@ class PushNotificationService {
       title: title,
       body: displayBody,
       imageUrl: imageUrl,
+      alarm: message.data['alarm'] == '1',
     ));
 
     _showInAppNotificationSnackBar(
@@ -148,6 +165,7 @@ class PushNotificationService {
     required String title,
     required String body,
     String? imageUrl,
+    bool alarm = false,
   }) async {
     StyleInformation? style;
     if (imageUrl != null && imageUrl.isNotEmpty) {
@@ -170,15 +188,26 @@ class PushNotificationService {
       title,
       body,
       NotificationDetails(
-        android: AndroidNotificationDetails(
-          _androidChannel.id,
-          _androidChannel.name,
-          channelDescription: _androidChannel.description,
-          importance: Importance.high,
-          priority: Priority.high,
-          icon: '@mipmap/ic_launcher',
-          styleInformation: style,
-        ),
+        android: alarm
+            ? AndroidNotificationDetails(
+                _alarmChannel.id,
+                _alarmChannel.name,
+                channelDescription: _alarmChannel.description,
+                importance: Importance.max,
+                priority: Priority.max,
+                category: AndroidNotificationCategory.alarm,
+                icon: '@mipmap/ic_launcher',
+                styleInformation: style,
+              )
+            : AndroidNotificationDetails(
+                _androidChannel.id,
+                _androidChannel.name,
+                channelDescription: _androidChannel.description,
+                importance: Importance.high,
+                priority: Priority.high,
+                icon: '@mipmap/ic_launcher',
+                styleInformation: style,
+              ),
         iOS: const DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
