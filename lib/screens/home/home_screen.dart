@@ -5,6 +5,7 @@ import '../attendance/attendance_screen.dart';
 import '../activity/activity_screen.dart';
 import '../requests/requests_screen.dart';
 import '../patroli/patroli_screen.dart';
+import '../../utils/home_tab_request.dart';
 import '../../utils/security_position.dart';
 import '../settings/settings_screen.dart';
 import '../team/team_screen.dart';
@@ -173,6 +174,7 @@ class _HomeScreenState extends State<HomeScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    HomeTabRequest.listenable.addListener(_onTabRequested);
     _moreMenuController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 320),
@@ -209,6 +211,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void dispose() {
+    HomeTabRequest.listenable.removeListener(_onTabRequested);
     WidgetsBinding.instance.removeObserver(this);
     GlobalUpdateChecker.stopAutoCheck();
     _homeAutoRefreshTimer?.cancel();
@@ -255,6 +258,11 @@ class _HomeScreenState extends State<HomeScreen>
     } else {
       _stopHomeAutoRefresh();
     }
+  }
+
+  void _onTabRequested() {
+    if (!mounted) return;
+    _onDestinationSelected(HomeTabRequest.target);
   }
 
   void _onDestinationSelected(int index) {
