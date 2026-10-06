@@ -12,6 +12,7 @@
     
     <application
         android:label="${appLabel}"
+        android:usesCleartextTraffic="${cleartext}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <service
