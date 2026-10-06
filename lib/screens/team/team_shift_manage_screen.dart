@@ -320,11 +320,12 @@ class _TeamShiftManageScreenState extends State<TeamShiftManageScreen> {
           const Text('Anggota'),
           const SizedBox(height: 6),
           DropdownButtonFormField<String>(
+            isExpanded: true,
             value: _selectedMemberId,
             items: _members
                 .map((member) => DropdownMenuItem(
                       value: member.id,
-                      child: Text(member.name),
+                      child: Text(member.name, maxLines: 1, overflow: TextOverflow.ellipsis),
                     ))
                 .toList(),
             onChanged: (value) {
@@ -338,11 +339,16 @@ class _TeamShiftManageScreenState extends State<TeamShiftManageScreen> {
           const Text('Shift'),
           const SizedBox(height: 6),
           DropdownButtonFormField<String>(
+            isExpanded: true,
             value: _selectedShiftId,
             items: _shifts
                 .map((shift) => DropdownMenuItem(
                       value: shift.id,
-                      child: Text('${shift.name} (${shift.startTime}-${shift.endTime})'),
+                      child: Text(
+                        '${shift.name} (${shift.startTime}-${shift.endTime})',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ))
                 .toList(),
             onChanged: (value) {

@@ -216,11 +216,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  bool _isDebugMode() {
-    // In production, this should return false
-    // For now, always show reset button for testing
-    return true;
-  }
+  /// Alat uji (mis. "Reset Update State") hanya tampil di build debug, bukan untuk pengguna biasa.
+  bool _isDebugMode() => kDebugMode;
 
   Future<void> _contactSupport() async {
     const whatsappUrl = 'https://wa.me/6285174200764';

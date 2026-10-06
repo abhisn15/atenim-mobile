@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../providers/request_provider.dart';
 import '../../widgets/adaptive_image.dart' as adaptive_image;
+import '../../widgets/ui_kit.dart' show EmptyState;
 import 'request_form_screen.dart';
 
 class RequestsScreen extends StatefulWidget {
@@ -126,7 +127,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Leave Request'),
+        title: const Text('Request'),
         actions: [
           if (_selectedStatus != null || _selectedType != null)
             IconButton(
@@ -305,36 +306,31 @@ class _RequestsScreenState extends State<RequestsScreen> {
                 );
 
                 if (filteredRequests.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.request_quote_outlined, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Belum ada request',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      final result = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const RequestFormScreen(),
-                        ),
-                      );
-                      if (result == true && mounted) {
-                        requestProvider.loadRequests();
-                      }
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Buat Request'),
-                  ),
-                ],
-              ),
-            );
-          }
+                  final filtered = _selectedStatus != null || _selectedType != null;
+                  return Center(
+                    child: SingleChildScrollView(
+                      child: EmptyState(
+                        icon: Icons.request_quote_outlined,
+                        title: filtered ? 'Tidak ada request yang cocok' : 'Belum ada request',
+                        message: filtered
+                            ? 'Ubah atau hapus filter untuk melihat request lainnya.'
+                            : 'Ajukan cuti, izin, atau request lain di sini. Statusnya bisa dipantau dari halaman ini.',
+                        actionLabel: 'Buat Request',
+                        onAction: () async {
+                          final result = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RequestFormScreen(),
+                            ),
+                          );
+                          if (result == true && mounted) {
+                            requestProvider.loadRequests();
+                          }
+                        },
+                      ),
+                    ),
+                  );
+                }
 
                 return RefreshIndicator(
                   onRefresh: () => requestProvider.loadRequests(),

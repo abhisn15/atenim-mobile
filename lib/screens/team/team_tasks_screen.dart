@@ -608,13 +608,18 @@ class _TeamTasksScreenState extends State<TeamTasksScreen> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _selectedTeamId,
                         decoration: const InputDecoration(labelText: 'Team'),
                         items: widget.teams
                             .map(
                               (team) => DropdownMenuItem(
                                 value: team.id,
-                                child: Text(team.name),
+                                child: Text(
+                                  team.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
                             )
                             .toList(),
@@ -627,6 +632,7 @@ class _TeamTasksScreenState extends State<TeamTasksScreen> {
                       ),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
+                        isExpanded: true,
                         value: _selectedAssigneeId,
                         decoration: const InputDecoration(labelText: 'Anggota'),
                         items: teamMembers
@@ -637,6 +643,8 @@ class _TeamTasksScreenState extends State<TeamTasksScreen> {
                                   member.externalId?.isNotEmpty == true
                                       ? '${member.name} (${member.externalId})'
                                       : member.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             )
