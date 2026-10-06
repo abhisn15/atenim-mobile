@@ -10,6 +10,7 @@ import '../services/tracking_state_service.dart';
 import '../services/persistent_notification_service.dart';
 import '../services/auth_service.dart';
 import '../utils/error_handler.dart';
+import '../utils/today_records.dart';
 import 'connectivity_provider.dart';
 
 class AttendanceProvider with ChangeNotifier {
@@ -19,6 +20,8 @@ class AttendanceProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
   ConnectivityProvider? _connectivityProvider;
   AttendancePayload? _attendanceData;
+  /// Kapan `_attendanceData` diambil dari server (atau disimpan ke cache). Null = cache lama tanpa penanda.
+  DateTime? _attendanceFetchedAt;
   AttendanceBreakState? _breakState;
   bool _isLoading = false;
   String? _error;
@@ -44,7 +47,18 @@ class AttendanceProvider with ChangeNotifier {
   bool _loadAttendanceInProgress = false;
 
   AttendancePayload? get attendanceData => _attendanceData;
-  List<AttendanceRecord> get todayRecords => _attendanceData?.today ?? [];
+  /// Absen "hari ini"; cache kemarin yang sudah selesai disaring (lihat [recordsForToday]).
+  List<AttendanceRecord> get todayRecords => recordsForToday(
+        _attendanceData?.today ?? const <AttendanceRecord>[],
+        fetchedAt: _attendanceFetchedAt,
+        now: DateTime.now(),
+      );
+
+  static DateTime? _savedAtOf(Map<String, dynamic> cached) {
+    final raw = cached['savedAt'];
+    return raw is String ? DateTime.tryParse(raw)?.toLocal() : null;
+  }
+
   AttendanceRecord? get activeAttendance {
     for (final record in todayRecords) {
       if (record.checkIn != null && record.checkOut == null) {
@@ -395,6 +409,7 @@ class AttendanceProvider with ChangeNotifier {
       final offlineData = await _offlineStorage.getAttendance();
       if (offlineData != null) {
         _attendanceData = AttendancePayload.fromJson(offlineData);
+        _attendanceFetchedAt = _savedAtOf(offlineData);
         _isOfflineMode = false;
         _error = null;
         _isLoading = false;
@@ -425,11 +440,14 @@ class AttendanceProvider with ChangeNotifier {
             endDate: endDate,
           );
           // Save to offline storage
+          final fetchedAt = DateTime.now();
           await _offlineStorage.saveAttendance({
             'today': freshData.today.map((e) => e.toJson()).toList(),
             'recent': freshData.recent.map((e) => e.toJson()).toList(),
+            'savedAt': fetchedAt.toIso8601String(),
           });
           _attendanceData = freshData;
+          _attendanceFetchedAt = fetchedAt;
           _error = null;
           _isOfflineMode = false;
           debugPrint('[AttendanceProvider] ✓ Attendance refreshed from API');
@@ -442,6 +460,7 @@ class AttendanceProvider with ChangeNotifier {
             final offlineData = await _offlineStorage.getAttendance();
             if (offlineData != null && offlineData.isNotEmpty) {
               _attendanceData = AttendancePayload.fromJson(offlineData);
+              _attendanceFetchedAt = _savedAtOf(offlineData);
               _isOfflineMode = true;
               _error = 'Mode offline - Data terakhir yang tersimpan';
               debugPrint(
@@ -463,6 +482,7 @@ class AttendanceProvider with ChangeNotifier {
           final offlineData = await _offlineStorage.getAttendance();
           if (offlineData != null) {
             _attendanceData = AttendancePayload.fromJson(offlineData);
+            _attendanceFetchedAt = _savedAtOf(offlineData);
             _isOfflineMode = true;
             _error = 'Mode offline - Data terakhir yang tersimpan';
             debugPrint(
