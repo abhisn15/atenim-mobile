@@ -67,7 +67,7 @@ class AppRatingDialog {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Bagaimana pengalaman\nAnda menggunakan Atenim?',
+                    'Bagaimana pengalaman\nAnda menggunakan MMS?',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 17,

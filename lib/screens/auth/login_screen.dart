@@ -104,7 +104,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 24),
                     // Title
                     Text(
-                      'Atenim Workforce',
+                      'MMS',
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                             fontWeight: FontWeight.bold,
                           ),
@@ -263,7 +263,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Atenim Workforce Hub - Powered by TPM Group',
+                      'MMS (Monitoring Management System) - Powered by TPM Group',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey[500],

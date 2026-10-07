@@ -81,7 +81,7 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["MAPS_API_KEY"] = envProperties.getProperty("GOOGLE_MAPS_API_KEY") ?: ""
-        manifestPlaceholders["appLabel"] = if (isDevBuild) "Atenim Dev" else "Atenim"
+        manifestPlaceholders["appLabel"] = if (isDevBuild) "MMS Dev" else "MMS"
         // HTTP polos hanya untuk build uji ke server lokal (ATENIM_CLEARTEXT=1); build biasa tetap HTTPS saja.
         manifestPlaceholders["cleartext"] = if (System.getenv("ATENIM_CLEARTEXT") == "1") "true" else "false"
         if (isDevBuild) {

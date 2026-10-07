@@ -250,7 +250,7 @@ class _PermissionStatusCardState extends State<PermissionStatusCard> {
 
               Text(
                 '🔒 Izin telah ditolak permanen. Untuk memberikan izin:\n\n'
-                '1. Buka Pengaturan → Aplikasi → Atenim\n'
+                '1. Buka Pengaturan → Aplikasi → MMS\n'
                 '2. Pilih "Izin" → "Lokasi" → "Izinkan sepanjang waktu"\n'
                 '3. Pilih "Notifikasi" → "Izinkan"\n\n'
                 'Atau klik "Buka Pengaturan" di bawah.',

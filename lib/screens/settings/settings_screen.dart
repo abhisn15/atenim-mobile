@@ -104,7 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: const [
                 Text(
-                  'Kebijakan Privasi Aplikasi Atenim',
+                  'Kebijakan Privasi Aplikasi MMS',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -323,7 +323,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildInfoTile(
             icon: Icons.info,
             title: 'Nama Aplikasi',
-            value: _packageInfo?.appName ?? 'Atenim Workforce',
+            value: _packageInfo?.appName ?? 'MMS',
           ),
           _buildInfoTile(
             icon: Icons.tag,
@@ -338,7 +338,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             leading: const Icon(Icons.menu_book_outlined, color: Colors.blue),
             title: const Text('Panduan Aplikasi'),
-            subtitle: const Text('Cara memakai Atenim, lengkap dengan gambar layar'),
+            subtitle: const Text('Cara memakai MMS, lengkap dengan gambar layar'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () {
               Navigator.of(context).push(
@@ -506,7 +506,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16.0),
               child: Text(
-                'Atenim Workforce v${_packageInfo?.version ?? '1.0.0'}',
+                'MMS v${_packageInfo?.version ?? '1.0.0'}',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontSize: 12,

@@ -131,7 +131,7 @@ class _MyAppState extends State<MyApp> {
       ],
       child: AppLifecycleHandler(
         child: MaterialApp(
-          title: 'Atenim Workforce',
+          title: 'MMS',
           debugShowCheckedModeBanner: false,
           navigatorKey: navigatorKey, // Global navigator key untuk auto logout
           scaffoldMessengerKey: scaffoldMessengerKey,

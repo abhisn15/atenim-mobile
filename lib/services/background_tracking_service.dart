@@ -36,7 +36,7 @@ class BackgroundTrackingService {
         autoStart: false, // Jangan auto start - akan dimulai manual saat check-in
         isForegroundMode: true,
         notificationChannelId: "atenim_service",
-        initialNotificationTitle: 'Atenim Active',
+        initialNotificationTitle: 'MMS aktif',
         initialNotificationContent: 'Layanan pelacakan lokasi berjalan',
         foregroundServiceNotificationId: _notificationId,
       ),

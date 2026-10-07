@@ -74,7 +74,7 @@ class PermissionGuidanceDialog extends StatelessWidget {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    '1. Buka Pengaturan → Aplikasi → Atenim\n'
+                    '1. Buka Pengaturan → Aplikasi → MMS\n'
                     '2. Pilih "Izin" → "Lokasi"\n'
                     '3. Pilih "Izinkan sepanjang waktu"\n'
                     '4. Kembali ke aplikasi dan coba lagi',

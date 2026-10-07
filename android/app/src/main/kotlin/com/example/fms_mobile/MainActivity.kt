@@ -63,7 +63,7 @@ class MainActivity : FlutterActivity() {
             // Channel untuk location tracking
             val trackingChannel = NotificationChannel(
                 "atenim_tracking",
-                "Atenim Location Tracking",
+                "MMS Location Tracking",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Pelacakan lokasi absensi karyawan"
@@ -75,10 +75,10 @@ class MainActivity : FlutterActivity() {
             // Channel untuk background service
             val serviceChannel = NotificationChannel(
                 "atenim_service",
-                "Atenim Background Service",
+                "MMS Background Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Layanan latar belakang Atenim"
+                description = "Layanan latar belakang MMS"
                 setShowBadge(false)
                 enableLights(false)
                 enableVibration(false)
