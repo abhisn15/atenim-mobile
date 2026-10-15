@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show PathMetric;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -7,12 +8,9 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Kamera depan dengan panduan wajah realtime dan jepret OTOMATIS (tanpa tombol foto).
-/// Foto baru diambil setelah wajah memenuhi semua syarat beberapa frame berturut-turut.
-/// Mengembalikan [shots] foto (daftar File) atau null bila dibatalkan.
-///
-/// Pengecekan di HP hanya untuk memandu pengguna; keputusan cocok/tidak cocok tetap di server.
-/// Posisi kepala yang diminta pada satu foto.
+import '../../widgets/motion.dart';
+
+/// Posisi kepala/ekspresi yang diminta pada satu foto.
 enum FacePose { front, turn, smile, blink }
 
 class FaceShot {
@@ -24,6 +22,13 @@ class FaceShot {
   const FaceShot(this.prompt, this.pose, {this.opposite = false});
 }
 
+/// Kamera depan dengan panduan wajah realtime dan jepret OTOMATIS (tanpa tombol foto).
+/// Foto baru diambil setelah wajah memenuhi syarat beberapa frame berturut-turut.
+///
+/// Hasil pop: daftar File (satu per langkah), `null` bila dibatalkan, atau daftar KOSONG bila HP ini tidak
+/// bisa memakai kamera Face ID (pemanggil jatuh ke kamera biasa supaya absen tidak buntu).
+///
+/// Pengecekan di HP hanya untuk memandu pengguna; keputusan cocok/tidak cocok tetap di server.
 class FaceCaptureScreen extends StatefulWidget {
   final String title;
 
@@ -44,14 +49,16 @@ class FaceCaptureScreen extends StatefulWidget {
   State<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
 }
 
-class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindingObserver {
-  static const _frameGap = Duration(milliseconds: 180);
+class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindingObserver, TickerProviderStateMixin {
   static const _orientations = {
     DeviceOrientation.portraitUp: 0,
     DeviceOrientation.landscapeLeft: 90,
     DeviceOrientation.portraitDown: 180,
     DeviceOrientation.landscapeRight: 270,
   };
+  static const _blinkGiveUp = Duration(seconds: 7);
+  static const _tipAfter = Duration(seconds: 5);
+  static const _maxUnreadableFrames = 20;
 
   CameraController? _controller;
   CameraDescription? _camera;
@@ -69,17 +76,30 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   bool _streaming = false;
   bool _disposed = false;
   int _stable = 0;
+  int _unreadable = 0;
   DateTime _lastFrame = DateTime.fromMillisecondsSinceEpoch(0);
+  double _avgMs = 80; // rata-rata waktu proses satu frame; mengatur jarak antar frame di HP lambat
+  final Stopwatch _clock = Stopwatch()..start();
+  bool _loggedFirstFrame = false;
+
   String? _fatal;
   String _hint = 'Menyiapkan kamera...';
+  String? _tip;
+  DateTime _hintSince = DateTime.now();
   bool _good = false;
+  bool _blinkClosedSeen = false;
+  DateTime? _blinkDeadline;
+  double? _lastTurnSign; // tanda sudut tolehan pertama, untuk meminta sisi sebaliknya
+  double? _pendingTurnSign;
+
+  late final AnimationController _ring = AnimationController(vsync: this, duration: Motion.quick);
+  late final AnimationController _flash = AnimationController(vsync: this, duration: const Duration(milliseconds: 220));
+  late final AnimationController _pop = AnimationController(vsync: this, duration: Motion.enter);
 
   int get _stableFramesNeeded => widget.fast ? 3 : 5;
   int get _total => widget.shots.length;
-  bool _blinkClosedSeen = false;
   FaceShot get _shot => widget.shots[_shots.length.clamp(0, _total - 1)];
-  double? _lastTurnSign; // tanda sudut tolehan pertama, untuk meminta sisi sebaliknya
-  double? _pendingTurnSign;
+  Duration get _frameGap => Duration(milliseconds: (_avgMs * 1.15).clamp(120, 450).round());
 
   @override
   void initState() {
@@ -95,6 +115,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     _stopStream();
     _controller?.dispose();
     _detector.close();
+    _ring.dispose();
+    _flash.dispose();
+    _pop.dispose();
     super.dispose();
   }
 
@@ -105,6 +128,13 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     } else if (state == AppLifecycleState.resumed && !_capturing && _controller?.value.isInitialized == true) {
       _startStream();
     }
+  }
+
+  /// HP ini tidak bisa memakai kamera Face ID: serahkan ke kamera biasa (daftar kosong), jangan buntukan absen.
+  void _giveUpToPlainCamera(String why) {
+    debugPrint('[FaceCapture] jatuh ke kamera biasa: $why');
+    if (!mounted || _disposed) return;
+    Navigator.of(context).pop(<File>[]);
   }
 
   Future<void> _init() async {
@@ -136,16 +166,36 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       }
       _controller = controller;
       if (mounted) setState(() => _hint = widget.shots.first.prompt);
+      _hintSince = DateTime.now();
+      _armShot();
       await _startStream();
     } catch (e) {
       debugPrint('[FaceCapture] init gagal: $e');
-      _setFatal('Kamera tidak bisa dibuka. Tutup aplikasi kamera lain lalu coba lagi.');
+      _giveUpToPlainCamera('init kamera: $e');
     }
   }
 
   void _setFatal(String message) {
     if (!mounted) return;
     setState(() => _fatal = message);
+  }
+
+  /// Menyiapkan keadaan awal untuk langkah yang sedang berjalan.
+  void _armShot() {
+    _blinkClosedSeen = false;
+    _blinkDeadline = _shot.pose == FacePose.blink ? DateTime.now().add(_blinkGiveUp) : null;
+    _stable = 0;
+    _setRing(0);
+  }
+
+  void _setRing(double v) {
+    if (!mounted || _disposed) return;
+    final target = v.clamp(0.0, 1.0);
+    if (Motion.reduced(context)) {
+      _ring.value = target;
+    } else {
+      _ring.animateTo(target, duration: Motion.quick, curve: Motion.easeOut);
+    }
   }
 
   Future<void> _startStream() async {
@@ -157,8 +207,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       await c.startImageStream(_onFrame);
     } catch (e) {
       _streaming = false;
-      debugPrint('[FaceCapture] startImageStream gagal: $e');
-      _setFatal('Kamera di HP ini belum mendukung Face ID.');
+      _giveUpToPlainCamera('startImageStream: $e');
     }
   }
 
@@ -178,9 +227,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     final comp = _orientations[controller.value.deviceOrientation];
     if (comp == null) return null;
     final sensor = camera.sensorOrientation;
-    final rotationDeg = camera.lensDirection == CameraLensDirection.front
-        ? (sensor + comp) % 360
-        : (sensor - comp + 360) % 360;
+    final rotationDeg = camera.lensDirection == CameraLensDirection.front ? (sensor + comp) % 360 : (sensor - comp + 360) % 360;
     final rotation = InputImageRotationValue.fromRawValue(rotationDeg);
     final format = InputImageFormatValue.fromRawValue(image.format.raw);
     if (rotation == null || format == null || format != InputImageFormat.nv21 || image.planes.length != 1) return null;
@@ -215,21 +262,33 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     if (now.difference(_lastFrame) < _frameGap) return;
     _lastFrame = now;
     _busy = true;
+    final sw = Stopwatch()..start();
     try {
       final input = _toInputImage(image);
-      if (input == null) return;
+      if (input == null) {
+        // Format kamera yang tidak bisa dibaca ML Kit di HP ini: setelah beberapa frame, jatuh ke kamera biasa.
+        if (++_unreadable >= _maxUnreadableFrames) _giveUpToPlainCamera('format frame tidak didukung');
+        return;
+      }
+      _unreadable = 0;
       final faces = await _detector.processImage(input);
       if (_disposed) return;
-      final swapped = input.metadata!.rotation == InputImageRotation.rotation90deg ||
-          input.metadata!.rotation == InputImageRotation.rotation270deg;
+      _avgMs = _avgMs * 0.8 + sw.elapsedMilliseconds * 0.2;
+      if (!_loggedFirstFrame) {
+        _loggedFirstFrame = true;
+        debugPrint('[FaceCapture] frame pertama terbaca ${_clock.elapsedMilliseconds} ms sejak layar dibuka, proses ${sw.elapsedMilliseconds} ms');
+      }
+      final swapped = input.metadata!.rotation == InputImageRotation.rotation90deg || input.metadata!.rotation == InputImageRotation.rotation270deg;
       final w = (swapped ? image.height : image.width).toDouble();
       final h = (swapped ? image.width : image.height).toDouble();
       final problem = _checkFrame(faces, w, h, _brightness(image));
       if (problem == null) {
         _stable++;
+        _setRing(_stable / _stableFramesNeeded);
         _update(_stable >= _stableFramesNeeded ? 'Tahan, mengambil foto...' : 'Bagus, tahan sebentar', true);
         if (_stable >= _stableFramesNeeded) await _capture();
       } else {
+        if (_stable > 0) _setRing(0);
         _stable = 0;
         _update(problem, false);
       }
@@ -264,7 +323,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     final right = f.rightEyeOpenProbability;
     if (shot.pose == FacePose.blink) {
       // Kedip = mata terlihat menutup lalu terbuka lagi; foto diambil saat mata sudah terbuka kembali.
-      if (left == null || right == null) return null; // HP tanpa klasifikasi mata: tidak bisa dicek, jangan menahan absen
+      // Kacamata/pantulan sering membuat mata tak terbaca: setelah beberapa detik langkah ini dilewati.
+      if (left == null || right == null) return null;
+      if (_blinkDeadline != null && DateTime.now().isAfter(_blinkDeadline!)) return null;
       if (left < 0.3 && right < 0.3) _blinkClosedSeen = true;
       if (!_blinkClosedSeen) return shot.prompt;
       if (left < 0.6 || right < 0.6) return 'Buka mata kembali.';
@@ -287,12 +348,37 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     return null;
   }
 
+  /// Saran tambahan bila masalah yang sama bertahan lama (mis. kacamata hitam, cahaya dari belakang).
+  String? _tipFor(String hint) {
+    if (hint.startsWith('Wajah tidak terdeteksi')) {
+      return 'Lepas kacamata hitam, topi, atau masker. Kacamata bening boleh; hindari pantulan lampu di lensa.';
+    }
+    if (hint.startsWith('Terlalu gelap') || hint.startsWith('Terlalu terang')) {
+      return 'Hadapkan wajah ke arah cahaya, jangan membelakangi jendela atau lampu.';
+    }
+    if (hint.startsWith('Buka mata') || hint.startsWith('Kedip') || hint.startsWith('Kedipkan')) {
+      return 'Kedip tidak terbaca? Langkah ini otomatis dilewati beberapa detik lagi.';
+    }
+    return null;
+  }
+
   void _update(String hint, bool good) {
-    if (!mounted || (_hint == hint && _good == good)) return;
-    setState(() {
-      _hint = hint;
-      _good = good;
-    });
+    if (!mounted) return;
+    final changed = _hint != hint || _good != good;
+    if (changed) {
+      if (_hint != hint) _hintSince = DateTime.now();
+      if (good && !_good) HapticFeedback.selectionClick();
+      setState(() {
+        _hint = hint;
+        _good = good;
+        _tip = good ? null : _tip;
+      });
+    }
+    // Tip muncul hanya bila hambatan yang sama bertahan > 5 dtk.
+    if (!good && _tip == null && DateTime.now().difference(_hintSince) > _tipAfter) {
+      final tip = _tipFor(hint);
+      if (tip != null && mounted) setState(() => _tip = tip);
+    }
   }
 
   Future<void> _capture() async {
@@ -304,19 +390,29 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       final file = await c.takePicture();
       _shots.add(File(file.path));
       if (_pendingTurnSign != null) _lastTurnSign = _pendingTurnSign;
-      _blinkClosedSeen = false;
       HapticFeedback.mediumImpact();
+      if (!Motion.reduced(context)) {
+        _flash.forward(from: 0).then((_) => _flash.reverse());
+      }
       if (_shots.length >= _total) {
         if (mounted) Navigator.of(context).pop(List<File>.from(_shots));
         return;
       }
-      _update('Foto ${_shots.length} dari $_total tersimpan', true);
-      await Future<void>.delayed(const Duration(milliseconds: 900));
+      _setRing(1);
+      _pop.forward(from: 0);
+      if (mounted) setState(() {
+        _hint = 'Foto ${_shots.length} dari $_total tersimpan';
+        _good = true;
+        _tip = null;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 750));
       if (!mounted || _disposed) return;
       setState(() {
         _hint = widget.shots[_shots.length].prompt;
         _good = false;
       });
+      _hintSince = DateTime.now();
+      _armShot();
       _capturing = false;
       await _startStream();
     } catch (e) {
@@ -329,9 +425,24 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     }
   }
 
+  IconData get _poseIcon {
+    switch (_shot.pose) {
+      case FacePose.turn:
+        return Icons.swap_horiz_rounded;
+      case FacePose.smile:
+        return Icons.sentiment_satisfied_alt_rounded;
+      case FacePose.blink:
+        return Icons.visibility_rounded;
+      case FacePose.front:
+        return Icons.face_rounded;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = _controller;
+    final reduced = Motion.reduced(context);
+    final fade = reduced ? Duration.zero : Motion.quick;
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -370,7 +481,46 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               ),
             if (_fatal == null)
               Positioned.fill(
-                child: IgnorePointer(child: CustomPaint(painter: _OvalGuidePainter(good: _good))),
+                child: IgnorePointer(
+                  child: RepaintBoundary(
+                    child: AnimatedBuilder(
+                      animation: _ring,
+                      builder: (_, __) => CustomPaint(painter: _OvalGuidePainter(good: _good, progress: _ring.value)),
+                    ),
+                  ),
+                ),
+              ),
+            // Tanda centang saat satu langkah selesai (pemicu: foto berhasil diambil).
+            if (_fatal == null)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: AnimatedBuilder(
+                      animation: _pop,
+                      builder: (_, __) {
+                        final t = Motion.easeOut.transform(_pop.value);
+                        final visible = _pop.isAnimating || _pop.value == 1;
+                        return Opacity(
+                          opacity: visible ? (1 - (_pop.value > 0.8 ? (_pop.value - 0.8) * 5 : 0.0)).clamp(0.0, 1.0).toDouble() : 0.0,
+                          child: Transform.scale(
+                            scale: 0.6 + 0.4 * t,
+                            child: const Icon(Icons.check_circle_rounded, color: Colors.greenAccent, size: 96),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            // Kilatan singkat saat foto diambil.
+            if (_fatal == null)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _flash,
+                    builder: (_, __) => ColoredBox(color: Colors.white.withValues(alpha: 0.35 * _flash.value)),
+                  ),
+                ),
               ),
             Positioned(
               top: 4,
@@ -402,25 +552,53 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             for (var i = 0; i < _total; i++)
-                              Container(
-                                width: 10,
+                              AnimatedContainer(
+                                duration: fade,
+                                width: i == _shots.length ? 22 : 10,
                                 height: 10,
                                 margin: const EdgeInsets.symmetric(horizontal: 4),
                                 decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: i < _shots.length ? Colors.greenAccent : Colors.white30,
+                                  borderRadius: BorderRadius.circular(5),
+                                  color: i < _shots.length ? Colors.greenAccent : (i == _shots.length ? Colors.white : Colors.white30),
                                 ),
                               ),
                           ],
                         ),
                       ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.65), borderRadius: BorderRadius.circular(12)),
-                      child: Text(
-                        _hint,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: _good ? Colors.greenAccent : Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
+                    Semantics(
+                      liveRegion: true,
+                      label: _hint,
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(14)),
+                        child: AnimatedSwitcher(
+                          duration: fade,
+                          child: Column(
+                            key: ValueKey('$_hint|$_tip'),
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(_poseIcon, color: _good ? Colors.greenAccent : Colors.white70, size: 22),
+                                  const SizedBox(width: 10),
+                                  Flexible(
+                                    child: Text(
+                                      _hint,
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(color: _good ? Colors.greenAccent : Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (_tip != null) ...[
+                                const SizedBox(height: 6),
+                                Text(_tip!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -433,10 +611,12 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   }
 }
 
-/// Lapisan gelap dengan lubang oval sebagai panduan posisi wajah; hijau bila sudah pas.
+/// Lapisan gelap dengan lubang oval sebagai panduan posisi wajah. Busur kemajuan mengisi
+/// mengelilingi oval selama wajah stabil; hijau bila sudah pas.
 class _OvalGuidePainter extends CustomPainter {
   final bool good;
-  const _OvalGuidePainter({required this.good});
+  final double progress;
+  const _OvalGuidePainter({required this.good, required this.progress});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -455,10 +635,22 @@ class _OvalGuidePainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 4
-        ..color = good ? Colors.greenAccent : Colors.white,
+        ..color = good ? Colors.greenAccent.withValues(alpha: 0.55) : Colors.white.withValues(alpha: 0.7),
     );
+    if (progress > 0) {
+      final path = Path()..addOval(oval);
+      final PathMetric metric = path.computeMetrics().first;
+      canvas.drawPath(
+        metric.extractPath(0, metric.length * progress.clamp(0.0, 1.0).toDouble()),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeWidth = 7
+          ..color = Colors.greenAccent,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_OvalGuidePainter old) => old.good != good;
+  bool shouldRepaint(_OvalGuidePainter old) => old.good != good || old.progress != progress;
 }

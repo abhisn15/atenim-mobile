@@ -7,12 +7,16 @@ import '../screens/camera/camera_screen.dart';
 import '../screens/face_id/face_capture_screen.dart';
 import '../screens/face_id/face_id_enroll_screen.dart';
 import '../services/face_id_service.dart';
+import '../widgets/face_verify_overlay.dart';
 
 /// Hasil pengambilan foto untuk absen: foto utama + (bila site meminta gerakan) foto tiap langkah.
 class AttendanceCapture {
   final File photo;
   final FaceLiveData? live;
-  const AttendanceCapture(this.photo, [this.live]);
+
+  /// Diambil lewat kamera Face ID (bukan kamera biasa): pengiriman diberi lapisan "Memverifikasi wajah".
+  final bool usedFace;
+  const AttendanceCapture(this.photo, {this.live, this.usedFace = false});
 }
 
 FaceShot _shotFor(String step) {
@@ -57,11 +61,15 @@ Future<AttendanceCapture?> captureAttendancePhoto(
     final files = await Navigator.of(context).push<List<File>>(
       MaterialPageRoute(builder: (_) => FaceCaptureScreen(title: title, shots: shots, fast: true)),
     );
-    if (files == null || files.isEmpty) return null;
-    final live = (challenge != null && files.length == shots.length)
-        ? FaceLiveData(token: challenge.token, kinds: steps, photos: files.sublist(1))
-        : null;
-    return AttendanceCapture(files.first, live);
+    if (files == null) return null; // dibatalkan
+    if (files.isNotEmpty) {
+      final live = (challenge != null && files.length == shots.length)
+          ? FaceLiveData(token: challenge.token, kinds: steps, photos: files.sublist(1))
+          : null;
+      return AttendanceCapture(files.first, live: live, usedFace: true);
+    }
+    // Daftar kosong = HP ini tidak bisa memakai kamera Face ID: jatuh ke kamera biasa agar absen tidak buntu.
+    if (!context.mounted) return null;
   }
 
   final plain = await Navigator.of(context).push<File>(
@@ -89,7 +97,9 @@ Future<bool> submitWithFaceRetry(
   var capture = first;
   var fallback = false;
   while (true) {
-    final ok = await submit(capture, fallback);
+    final ok = capture.usedFace
+        ? await showFaceVerifying<bool>(context, () => submit(capture, fallback), isSuccess: (r) => r)
+        : await submit(capture, fallback);
     if (ok) return true;
     final failure = provider.takeFaceIdFailure();
     if (failure == null || !context.mounted) return false;

@@ -39,6 +39,10 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
       ),
     );
     if (photos == null || !mounted) return;
+    if (photos.isEmpty) {
+      setState(() => _error = 'HP ini belum bisa memakai kamera Face ID. Hubungi admin.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
