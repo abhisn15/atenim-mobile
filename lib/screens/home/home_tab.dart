@@ -21,6 +21,7 @@ import '../face_id/face_id_enroll_screen.dart';
 import '../../services/face_id_service.dart';
 import '../../services/face_warmup.dart';
 import '../../utils/face_attendance_flow.dart';
+import '../../utils/checkout_confirmation.dart';
 import '../profile/profile_screen.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/ui_kit.dart' show AtenimDensity;
@@ -1513,32 +1514,8 @@ class _HomeTabState extends State<HomeTab>
     return result;
   }
 
-  Future<bool> _showCheckoutConfirmationDialog(BuildContext context) async {
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Konfirmasi Check-out'),
-          content: const Text(
-            'Apakah Anda yakin ingin melanjutkan check-out sekarang?',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Batal'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Ya, Lanjutkan'),
-            ),
-          ],
-        );
-      },
-    );
-
-    return result ?? false;
-  }
+  /// Konfirmasi check-out bertingkat (pekerjaan belum selesai -> "Apakah Anda yakin?"); lihat utils/checkout_confirmation.dart.
+  Future<bool> _showCheckoutConfirmationDialog(BuildContext context) => confirmCheckOut(context);
 
   int? _calculateMinutesWorked(AttendanceRecord? today) {
     if (today == null) return null;
