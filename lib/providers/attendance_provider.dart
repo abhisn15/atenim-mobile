@@ -79,6 +79,14 @@ class AttendanceProvider with ChangeNotifier {
 
   /// Penolakan Face ID terakhir dari server ({code, canFallback}); dibaca layar lalu dikosongkan lewat [takeFaceIdFailure].
   Map<String, dynamic>? _faceIdFailure;
+  /// Status wajah dari respons absen terakhir yang berhasil (VERIFIED, MISMATCH, QUALITY, FALLBACK, ...); dibaca sekali.
+  String? _lastFaceStatus;
+  String? takeFaceStatus() {
+    final s = _lastFaceStatus;
+    _lastFaceStatus = null;
+    return s;
+  }
+
   Map<String, dynamic>? takeFaceIdFailure() {
     final f = _faceIdFailure;
     _faceIdFailure = null;
@@ -725,6 +733,7 @@ class AttendanceProvider with ChangeNotifier {
             faceFallback: faceFallback,
             live: live,
           );
+          _lastFaceStatus = result['faceStatus'] as String?;
 
           if (result['success'] == true) {
             debugPrint(
@@ -1147,6 +1156,7 @@ class AttendanceProvider with ChangeNotifier {
             faceFallback: faceFallback,
             live: live,
           );
+          _lastFaceStatus = result['faceStatus'] as String?;
 
           if (result['success'] == true) {
             debugPrint(

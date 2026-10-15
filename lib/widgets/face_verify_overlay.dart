@@ -5,15 +5,19 @@ import 'package:flutter/services.dart';
 
 import 'motion.dart';
 
-enum _Phase { working, success, failure }
+/// Hasil yang ditampilkan lapisan verifikasi. Jujur terhadap hasil server: absen yang tercatat tetapi
+/// wajahnya TIDAK terverifikasi (mode pencatat, jalur lanjut, offline) tidak boleh tampil sebagai "Terverifikasi".
+enum FaceVerifyOutcome { verified, recordedOnly, failed }
+
+enum _Phase { working, verified, recordedOnly, failed }
 
 /// Menampilkan lapisan "Memverifikasi wajah..." selama [task] berjalan, lalu hasil singkat
-/// (centang atau tanda gagal) sebelum lapisan ditutup dan hasil dikembalikan.
+/// (centang / tanda info / gagal) sebelum lapisan ditutup dan hasil dikembalikan.
 /// Gerak hanya opacity/transform dan mengikuti pengaturan "matikan animasi" di sistem.
 Future<T> showFaceVerifying<T>(
   BuildContext context,
   Future<T> Function() task, {
-  required bool Function(T result) isSuccess,
+  required FaceVerifyOutcome Function(T result) outcomeOf,
   String message = 'Memverifikasi wajah...',
 }) async {
   final phase = ValueNotifier<_Phase>(_Phase.working);
@@ -34,9 +38,17 @@ Future<T> showFaceVerifying<T>(
   );
   try {
     final result = await task();
-    phase.value = isSuccess(result) ? _Phase.success : _Phase.failure;
-    if (phase.value == _Phase.success) HapticFeedback.lightImpact();
-    await Future<void>.delayed(const Duration(milliseconds: 650));
+    switch (outcomeOf(result)) {
+      case FaceVerifyOutcome.verified:
+        phase.value = _Phase.verified;
+        HapticFeedback.lightImpact();
+      case FaceVerifyOutcome.recordedOnly:
+        phase.value = _Phase.recordedOnly;
+      case FaceVerifyOutcome.failed:
+        phase.value = _Phase.failed;
+    }
+    // Hasil "tercatat tapi belum terverifikasi" butuh waktu baca lebih lama.
+    await Future<void>.delayed(Duration(milliseconds: phase.value == _Phase.recordedOnly ? 1400 : 650));
     return result;
   } finally {
     if (shown) navigator.pop();
@@ -57,16 +69,22 @@ class _VerifyCard extends StatelessWidget {
       child: ValueListenableBuilder<_Phase>(
         valueListenable: phase,
         builder: (context, p, _) {
-          final (IconData? icon, Color color, String text) = switch (p) {
-            _Phase.working => (null, Colors.white, message),
-            _Phase.success => (Icons.check_circle_rounded, Colors.greenAccent, 'Terverifikasi'),
-            _Phase.failure => (Icons.cancel_rounded, Colors.redAccent, 'Belum berhasil'),
+          final (IconData? icon, Color color, String text, String? sub) = switch (p) {
+            _Phase.working => (null, Colors.white, message, null),
+            _Phase.verified => (Icons.check_circle_rounded, Colors.greenAccent, 'Terverifikasi', null),
+            _Phase.recordedOnly => (
+              Icons.info_rounded,
+              Colors.amberAccent,
+              'Absen tercatat',
+              'Wajah belum terverifikasi. Hasilnya dicatat untuk ditinjau.',
+            ),
+            _Phase.failed => (Icons.cancel_rounded, Colors.redAccent, 'Belum berhasil', null),
           };
           return Semantics(
             liveRegion: true,
-            label: text,
+            label: sub == null ? text : '$text. $sub',
             child: Container(
-              width: 220,
+              width: 240,
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               decoration: BoxDecoration(color: const Color(0xE6111111), borderRadius: BorderRadius.circular(18)),
               child: Column(
@@ -88,6 +106,10 @@ class _VerifyCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 14),
                   Text(text, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 16, fontWeight: FontWeight.w600)),
+                  if (sub != null) ...[
+                    const SizedBox(height: 6),
+                    Text(sub, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                  ],
                 ],
               ),
             ),

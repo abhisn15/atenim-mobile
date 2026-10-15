@@ -675,6 +675,7 @@ class AttendanceService {
           'success': true,
           'data': data,
           'message': message ?? 'Check-in berhasil',
+          'faceStatus': (responseData is Map && responseData['faceId'] is Map) ? (responseData['faceId'] as Map)['status'] : null,
         };
       } else {
         // Handle error response
@@ -840,6 +841,7 @@ class AttendanceService {
           'success': true,
           'data': data,
           'message': message ?? 'Check-out berhasil',
+          'faceStatus': (responseData is Map && responseData['faceId'] is Map) ? (responseData['faceId'] as Map)['status'] : null,
         };
       } else {
         // Handle error response

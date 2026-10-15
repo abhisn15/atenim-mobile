@@ -98,7 +98,17 @@ Future<bool> submitWithFaceRetry(
   var fallback = false;
   while (true) {
     final ok = capture.usedFace
-        ? await showFaceVerifying<bool>(context, () => submit(capture, fallback), isSuccess: (r) => r)
+        ? await showFaceVerifying<bool>(
+            context,
+            () => submit(capture, fallback),
+            // Hanya VERIFIED yang tampil "Terverifikasi"; absen yang cuma tercatat (mode pencatat, lanjut tanpa
+            // verifikasi, offline) ditampilkan apa adanya.
+            outcomeOf: (ok) {
+              if (!ok) return FaceVerifyOutcome.failed;
+              final status = provider.takeFaceStatus();
+              return (status == null || status == 'VERIFIED') ? FaceVerifyOutcome.verified : FaceVerifyOutcome.recordedOnly;
+            },
+          )
         : await submit(capture, fallback);
     if (ok) return true;
     final failure = provider.takeFaceIdFailure();
