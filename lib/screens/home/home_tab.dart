@@ -17,7 +17,9 @@ import '../../models/shift_model.dart';
 import '../../models/attendance_model.dart';
 import '../../models/request_model.dart';
 import '../../models/team_model.dart';
-import '../camera/camera_screen.dart';
+import '../face_id/face_id_enroll_screen.dart';
+import '../../services/face_id_service.dart';
+import '../../utils/face_attendance_flow.dart';
 import '../profile/profile_screen.dart';
 import '../../widgets/shimmer_loading.dart';
 import '../../widgets/ui_kit.dart' show AtenimDensity;
@@ -42,7 +44,6 @@ import '../../utils/clock.dart';
 import '../attendance/attendance_qr_scanner_screen.dart';
 import '../patroli/patroli_screen.dart';
 import '../../utils/security_position.dart';
-import 'dart:io';
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -167,6 +168,21 @@ class _HomeTabState extends State<HomeTab>
   bool _teamInfoLoaded = false;
   List<String> _teamLeaderNames = [];
 
+  /// Face ID: sekali per sesi aplikasi, tawarkan pendaftaran wajah bila site karyawan mengaktifkannya
+  /// dan karyawan belum mendaftar/menolak. Gagal membaca status tidak mengganggu apa pun.
+  static bool _faceEnrollPromptedThisSession = false;
+  Future<void> _maybePromptFaceEnrollment() async {
+    if (_faceEnrollPromptedThisSession) return;
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    if (!mounted) return;
+    final state = await FaceIdService().getState();
+    if (!mounted || state == null || !state.enabled || !state.needsEnrollment) return;
+    _faceEnrollPromptedThisSession = true;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => FaceIdEnrollScreen(state: state)),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -176,6 +192,7 @@ class _HomeTabState extends State<HomeTab>
     PushNotificationService.incomingMessageTick.addListener(_fetchUnreadCount);
 
     debugPrint('[HomeTab] Initializing...');
+    _maybePromptFaceEnrollment();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       // Register rating callback setelah checkout sukses
@@ -2534,15 +2551,9 @@ class _HomeTabState extends State<HomeTab>
 
       debugPrint('[HomeTab] Opening camera for check-in selfie...');
 
-      final photo = await Navigator.push<File>(
+      final photo = await captureAttendancePhoto(
         context,
-        MaterialPageRoute(
-          builder: (_) => const CameraScreen(
-            title: 'Ambil Selfie untuk Check-In',
-            allowGallery: false,
-            preferLowResolution: true,
-          ),
-        ),
+        title: 'Ambil Selfie untuk Check-In',
       );
 
       if (photo != null && mounted) {
@@ -2554,12 +2565,19 @@ class _HomeTabState extends State<HomeTab>
             _cacheGpsPosition(refreshedPosition);
           }
           final gpsCoordinates = _consumeRecentGpsCoordinates();
-          final success = await attendanceProvider.checkIn(
-            photo: photo,
-            shiftId: selectedShift?.id,
-            checkInReason: checkInReason,
-            latitude: gpsCoordinates?['lat'],
-            longitude: gpsCoordinates?['lng'],
+          final success = await submitWithFaceRetry(
+            context,
+            provider: attendanceProvider,
+            captureTitle: 'Ambil Selfie untuk Check-In',
+            firstPhoto: photo,
+            submit: (p, faceFallback) => attendanceProvider.checkIn(
+              photo: p,
+              shiftId: selectedShift?.id,
+              checkInReason: checkInReason,
+              latitude: gpsCoordinates?['lat'],
+              longitude: gpsCoordinates?['lng'],
+              faceFallback: faceFallback,
+            ),
           );
 
           if (mounted) {
@@ -2686,15 +2704,9 @@ class _HomeTabState extends State<HomeTab>
       final wasTracking = await attendanceProvider.pauseRealtimeTracking();
 
       // Buka kamera untuk selfie (hanya kamera, tidak boleh galeri)
-      final photo = await Navigator.push<File>(
+      final photo = await captureAttendancePhoto(
         context,
-        MaterialPageRoute(
-          builder: (_) => const CameraScreen(
-            title: 'Ambil Selfie untuk Check-Out',
-            allowGallery: false, // Check-out hanya boleh kamera
-            preferLowResolution: true,
-          ),
-        ),
+        title: 'Ambil Selfie untuk Check-Out',
       );
 
       if (photo != null && mounted) {
@@ -2707,12 +2719,19 @@ class _HomeTabState extends State<HomeTab>
             _cacheGpsPosition(refreshedPosition);
           }
           final gpsCoordinates = _consumeRecentGpsCoordinates();
-          final success = await attendanceProvider.checkOut(
-            photo: photo,
-            shiftId: today?.shiftId,
-            earlyCheckoutReason: earlyCheckoutReason,
-            latitude: gpsCoordinates?['lat'],
-            longitude: gpsCoordinates?['lng'],
+          final success = await submitWithFaceRetry(
+            context,
+            provider: attendanceProvider,
+            captureTitle: 'Ambil Selfie untuk Check-Out',
+            firstPhoto: photo,
+            submit: (p, faceFallback) => attendanceProvider.checkOut(
+              photo: p,
+              shiftId: today?.shiftId,
+              earlyCheckoutReason: earlyCheckoutReason,
+              latitude: gpsCoordinates?['lat'],
+              longitude: gpsCoordinates?['lng'],
+              faceFallback: faceFallback,
+            ),
           );
 
           if (mounted) {

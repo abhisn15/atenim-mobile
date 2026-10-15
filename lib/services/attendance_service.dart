@@ -518,6 +518,15 @@ class AttendanceService {
     }
   }
 
+  /// Penolakan Face ID dari server (HTTP 422 dengan `faceId`): {code, canFallback}. Null untuk galat lain.
+  Map<String, dynamic>? _faceIdRejection(Response response) {
+    final data = response.data;
+    if (response.statusCode == 422 && data is Map && data['faceId'] is Map) {
+      return Map<String, dynamic>.from(data['faceId'] as Map);
+    }
+    return null;
+  }
+
   Future<Map<String, dynamic>> checkIn({
     required File photo,
     String?
@@ -526,6 +535,8 @@ class AttendanceService {
     double? longitude,
     Site? site,
     String? checkInReason,
+    bool faceFallback = false,
+    bool faceOffline = false,
   }) async {
     debugPrint('[AttendanceService] Starting check-in...');
     debugPrint('[AttendanceService] Shift ID: ${shiftId ?? "null (no shift)"}');
@@ -603,6 +614,8 @@ class AttendanceService {
         if (longitude != null) 'longitude': longitude.toString(),
         if (checkInReason != null && checkInReason.trim().isNotEmpty)
           'checkInReason': checkInReason.trim(),
+        if (faceFallback) 'faceFallback': '1',
+        if (faceOffline) 'faceOffline': '1',
         if (deviceMeta != null) 'deviceInfo': jsonEncode(deviceMeta),
         if (appMeta != null) 'appInfo': jsonEncode(appMeta),
         if (deviceMeta?['model'] != null)
@@ -659,6 +672,10 @@ class AttendanceService {
         debugPrint(
           '[AttendanceService] ✗ Check-in failed: $errorMessage (Status: ${response.statusCode})',
         );
+        final faceId = _faceIdRejection(response);
+        if (faceId != null) {
+          return {'success': false, 'message': errorMessage.toString(), 'faceId': faceId};
+        }
         throw DioException(
           requestOptions: RequestOptions(path: ApiConfig.checkIn),
           response: response,
@@ -681,6 +698,8 @@ class AttendanceService {
     double? longitude,
     Site? site,
     String? earlyCheckoutReason,
+    bool faceFallback = false,
+    bool faceOffline = false,
   }) async {
     debugPrint('[AttendanceService] Starting check-out...');
     debugPrint('[AttendanceService] Shift ID: ${shiftId ?? "null (no shift)"}');
@@ -758,6 +777,8 @@ class AttendanceService {
         if (earlyCheckoutReason != null &&
             earlyCheckoutReason.trim().isNotEmpty)
           'earlyCheckoutReason': earlyCheckoutReason.trim(),
+        if (faceFallback) 'faceFallback': '1',
+        if (faceOffline) 'faceOffline': '1',
         if (deviceMeta != null) 'deviceInfo': jsonEncode(deviceMeta),
         if (appMeta != null) 'appInfo': jsonEncode(appMeta),
         if (deviceMeta?['model'] != null)
@@ -814,6 +835,10 @@ class AttendanceService {
         debugPrint(
           '[AttendanceService] ✗ Check-out failed: $errorMessage (Status: ${response.statusCode})',
         );
+        final faceId = _faceIdRejection(response);
+        if (faceId != null) {
+          return {'success': false, 'message': errorMessage.toString(), 'faceId': faceId};
+        }
         throw DioException(
           requestOptions: RequestOptions(path: ApiConfig.checkOut),
           response: response,

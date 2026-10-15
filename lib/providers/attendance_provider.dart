@@ -75,6 +75,14 @@ class AttendanceProvider with ChangeNotifier {
   bool get isBreakLoading => _isBreakLoading;
   bool get isBreakActionInProgress => _breakActionInProgress;
   String? get error => _error;
+
+  /// Penolakan Face ID terakhir dari server ({code, canFallback}); dibaca layar lalu dikosongkan lewat [takeFaceIdFailure].
+  Map<String, dynamic>? _faceIdFailure;
+  Map<String, dynamic>? takeFaceIdFailure() {
+    final f = _faceIdFailure;
+    _faceIdFailure = null;
+    return f;
+  }
   bool get isOfflineMode => _isOfflineMode;
   bool get isRealtimeTracking => _realtimeService.isTracking;
   bool get isTrackingEnabledByPolicy => _trackingEnabledByPolicy;
@@ -659,6 +667,7 @@ class AttendanceProvider with ChangeNotifier {
     double? latitude,
     double? longitude,
     String? checkInReason,
+    bool faceFallback = false,
   }) async {
     // Prevent double check-in calls
     if (_checkInInProgress) {
@@ -711,6 +720,7 @@ class AttendanceProvider with ChangeNotifier {
             longitude: resolvedLongitude,
             site: sessionUser?.site,
             checkInReason: checkInReason,
+            faceFallback: faceFallback,
           );
 
           if (result['success'] == true) {
@@ -895,6 +905,9 @@ class AttendanceProvider with ChangeNotifier {
             return true;
           } else {
             _error = result['message'] as String? ?? 'Check-in gagal';
+            _faceIdFailure = result['faceId'] is Map
+                ? Map<String, dynamic>.from(result['faceId'] as Map)
+                : null;
             debugPrint('[AttendanceProvider] ✗ Check-in failed: $_error');
             return false;
           }
@@ -1076,6 +1089,7 @@ class AttendanceProvider with ChangeNotifier {
     double? latitude,
     double? longitude,
     String? earlyCheckoutReason,
+    bool faceFallback = false,
   }) async {
     // Prevent double check-out calls
     if (_checkOutInProgress) {
@@ -1126,6 +1140,7 @@ class AttendanceProvider with ChangeNotifier {
             longitude: resolvedLongitude,
             site: sessionUser?.site,
             earlyCheckoutReason: earlyCheckoutReason,
+            faceFallback: faceFallback,
           );
 
           if (result['success'] == true) {
@@ -1196,6 +1211,9 @@ class AttendanceProvider with ChangeNotifier {
             return true;
           } else {
             _error = result['message'] as String? ?? 'Check-out gagal';
+            _faceIdFailure = result['faceId'] is Map
+                ? Map<String, dynamic>.from(result['faceId'] as Map)
+                : null;
             debugPrint('[AttendanceProvider] ✗ Check-out failed: $_error');
             return false;
           }
@@ -1488,6 +1506,7 @@ class AttendanceProvider with ChangeNotifier {
         longitude: longitude,
         site: sessionUser?.site,
         checkInReason: checkInReason,
+        faceOffline: true,
       );
 
       if (result['success'] == true) {
@@ -1555,6 +1574,7 @@ class AttendanceProvider with ChangeNotifier {
         longitude: longitude,
         site: sessionUser?.site,
         earlyCheckoutReason: earlyCheckoutReason,
+        faceOffline: true,
       );
 
       if (result['success'] == true) {
