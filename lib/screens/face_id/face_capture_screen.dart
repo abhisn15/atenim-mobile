@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../services/face_warmup.dart';
 import '../../widgets/motion.dart';
 
 /// Posisi kepala/ekspresi yang diminta pada satu foto.
@@ -62,13 +63,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 
   CameraController? _controller;
   CameraDescription? _camera;
-  final FaceDetector _detector = FaceDetector(
-    options: FaceDetectorOptions(
-      performanceMode: FaceDetectorMode.fast,
-      enableClassification: true,
-      minFaceSize: 0.2,
-    ),
-  );
+  // Detektor bersama yang sudah dipanaskan; tidak ditutup saat layar ini ditutup.
+  final FaceDetector _detector = FaceWarmup.detector;
 
   final List<File> _shots = [];
   bool _busy = false; // sedang memproses satu frame
@@ -114,7 +110,6 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     WidgetsBinding.instance.removeObserver(this);
     _stopStream();
     _controller?.dispose();
-    _detector.close();
     _ring.dispose();
     _flash.dispose();
     _pop.dispose();
@@ -144,7 +139,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       return;
     }
     try {
-      final cameras = await availableCameras();
+      final cameras = FaceWarmup.cameras ?? await availableCameras();
       if (cameras.isEmpty) {
         _setFatal('Kamera tidak ditemukan di HP ini.');
         return;
@@ -537,6 +532,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               right: 0,
               child: Text(widget.title, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
             ),
+            if (_fatal == null && _total > 1)
+              Positioned(top: 48, left: 0, right: 0, child: _StepDots(total: _total, done: _shots.length, fade: fade)),
             if (_fatal == null)
               Positioned(
                 left: 20,
@@ -545,26 +542,6 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_total > 1)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            for (var i = 0; i < _total; i++)
-                              AnimatedContainer(
-                                duration: fade,
-                                width: i == _shots.length ? 22 : 10,
-                                height: 10,
-                                margin: const EdgeInsets.symmetric(horizontal: 4),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(5),
-                                  color: i < _shots.length ? Colors.greenAccent : (i == _shots.length ? Colors.white : Colors.white30),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
                     Semantics(
                       liveRegion: true,
                       label: _hint,
@@ -653,4 +630,32 @@ class _OvalGuidePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_OvalGuidePainter old) => old.good != good || old.progress != progress;
+}
+
+/// Titik kemajuan langkah: yang selesai hijau, yang sedang berjalan memanjang.
+class _StepDots extends StatelessWidget {
+  final int total;
+  final int done;
+  final Duration fade;
+  const _StepDots({required this.total, required this.done, required this.fade});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (var i = 0; i < total; i++)
+          AnimatedContainer(
+            duration: fade,
+            width: i == done ? 22 : 10,
+            height: 10,
+            margin: const EdgeInsets.symmetric(horizontal: 4),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(5),
+              color: i < done ? Colors.greenAccent : (i == done ? Colors.white : Colors.white30),
+            ),
+          ),
+      ],
+    );
+  }
 }

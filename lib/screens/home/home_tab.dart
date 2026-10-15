@@ -19,6 +19,7 @@ import '../../models/request_model.dart';
 import '../../models/team_model.dart';
 import '../face_id/face_id_enroll_screen.dart';
 import '../../services/face_id_service.dart';
+import '../../services/face_warmup.dart';
 import '../../utils/face_attendance_flow.dart';
 import '../profile/profile_screen.dart';
 import '../../widgets/shimmer_loading.dart';
@@ -176,6 +177,7 @@ class _HomeTabState extends State<HomeTab>
     await Future<void>.delayed(const Duration(milliseconds: 1500));
     if (!mounted) return;
     final state = await FaceIdService().getState();
+    if (mounted && state != null && state.enabled && state.usesFaceCapture) FaceWarmup.run();
     if (!mounted || state == null || !state.enabled || !state.needsEnrollment) return;
     _faceEnrollPromptedThisSession = true;
     await Navigator.of(context).push<bool>(
