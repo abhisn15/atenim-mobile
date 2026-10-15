@@ -5,51 +5,109 @@ import 'package:flutter/material.dart';
 import '../providers/attendance_provider.dart';
 import '../screens/camera/camera_screen.dart';
 import '../screens/face_id/face_capture_screen.dart';
+import '../screens/face_id/face_id_enroll_screen.dart';
 import '../services/face_id_service.dart';
 
+/// Hasil pengambilan foto untuk absen: foto utama + (bila site meminta gerakan) foto tiap langkah.
+class AttendanceCapture {
+  final File photo;
+  final FaceLiveData? live;
+  const AttendanceCapture(this.photo, [this.live]);
+}
+
+FaceShot _shotFor(String step) {
+  switch (step) {
+    case 'turn':
+      return const FaceShot('Tolehkan kepala pelan-pelan ke satu sisi', FacePose.turn);
+    case 'smile':
+      return const FaceShot('Senyum ke kamera', FacePose.smile);
+    default:
+      return const FaceShot('Kedipkan mata Anda sekali', FacePose.blink);
+  }
+}
+
 /// Mengambil foto untuk check-in/out. Bila karyawan sudah mendaftarkan wajah di site yang Face ID-nya
-/// aktif, dipakai kamera Face ID (jepret otomatis, tanpa tombol foto); selain itu kamera biasa.
-/// Gagal membaca status Face ID tidak pernah memblokir absen: jatuh ke kamera biasa.
-Future<File?> captureAttendancePhoto(BuildContext context, {required String title}) async {
+/// aktif, dipakai kamera Face ID (jepret otomatis, tanpa tombol foto) ditambah gerakan acak pilihan
+/// server bila site memintanya; selain itu kamera biasa. Status dan tantangan diambil bersamaan supaya
+/// tidak menambah waktu tunggu, dan gagal membacanya tidak pernah memblokir absen.
+Future<AttendanceCapture?> captureAttendancePhoto(
+  BuildContext context, {
+  required String title,
+  required bool checkOut,
+}) async {
+  final service = FaceIdService();
   FaceIdState? state;
+  FaceChallenge? challenge;
   try {
-    state = await FaceIdService().getState().timeout(const Duration(seconds: 4), onTimeout: () => null);
-  } catch (_) {
-    state = null;
-  }
+    final results = await Future.wait<Object?>([
+      service.getState().timeout(const Duration(seconds: 4), onTimeout: () => null),
+      service.getChallenge(checkOut ? 'checkout' : 'checkin').timeout(const Duration(seconds: 4), onTimeout: () => null),
+    ]);
+    state = results[0] as FaceIdState?;
+    challenge = results[1] as FaceChallenge?;
+  } catch (_) {}
   if (!context.mounted) return null;
+
   if (state != null && state.usesFaceCapture) {
-    final shots = await Navigator.of(context).push<List<File>>(
-      MaterialPageRoute(builder: (_) => FaceCaptureScreen(title: title)),
+    final steps = challenge?.steps ?? const <String>[];
+    final shots = [
+      const FaceShot('Lihat lurus ke kamera', FacePose.front),
+      ...steps.map(_shotFor),
+    ];
+    final files = await Navigator.of(context).push<List<File>>(
+      MaterialPageRoute(builder: (_) => FaceCaptureScreen(title: title, shots: shots, fast: true)),
     );
-    return (shots == null || shots.isEmpty) ? null : shots.first;
+    if (files == null || files.isEmpty) return null;
+    final live = (challenge != null && files.length == shots.length)
+        ? FaceLiveData(token: challenge.token, kinds: steps, photos: files.sublist(1))
+        : null;
+    return AttendanceCapture(files.first, live);
   }
-  return Navigator.of(context).push<File>(
+
+  final plain = await Navigator.of(context).push<File>(
     MaterialPageRoute(
       builder: (_) => CameraScreen(title: title, allowGallery: false, preferLowResolution: true),
     ),
   );
+  return plain == null ? null : AttendanceCapture(plain);
 }
 
 enum _FaceChoice { retry, fallback, cancel }
 
-/// Mengirim absen dan menangani penolakan Face ID dari server (wajah tidak cocok / foto belum layak):
-/// karyawan boleh mengulang foto, dan setelah beberapa kali gagal boleh melanjutkan tanpa verifikasi
-/// (ditandai untuk ditinjau admin). Penolakan selain Face ID dikembalikan apa adanya (false).
+/// Mengirim absen dan menangani penolakan Face ID dari server (wajah tidak cocok / foto belum layak /
+/// gerakan belum terdeteksi / belum mendaftar): karyawan boleh mengulang, dan setelah beberapa kali
+/// gagal boleh melanjutkan tanpa verifikasi (ditandai untuk ditinjau admin). Penolakan selain Face ID
+/// dikembalikan apa adanya (false).
 Future<bool> submitWithFaceRetry(
   BuildContext context, {
   required AttendanceProvider provider,
   required String captureTitle,
-  required File firstPhoto,
-  required Future<bool> Function(File photo, bool faceFallback) submit,
+  required bool checkOut,
+  required AttendanceCapture first,
+  required Future<bool> Function(AttendanceCapture capture, bool faceFallback) submit,
 }) async {
-  var photo = firstPhoto;
+  var capture = first;
   var fallback = false;
   while (true) {
-    final ok = await submit(photo, fallback);
+    final ok = await submit(capture, fallback);
     if (ok) return true;
     final failure = provider.takeFaceIdFailure();
     if (failure == null || !context.mounted) return false;
+
+    // Mode wajib dan belum mendaftar: daftar dulu (atau menolak secara sadar), lalu ulangi foto absen.
+    if (failure['code'] == 'NOT_ENROLLED') {
+      final state = await FaceIdService().getState();
+      if (state == null || !context.mounted) return false;
+      final done = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(builder: (_) => FaceIdEnrollScreen(state: state)),
+      );
+      if (done != true || !context.mounted) return false;
+      final next = await captureAttendancePhoto(context, title: captureTitle, checkOut: checkOut);
+      if (next == null) return false;
+      capture = next;
+      fallback = false;
+      continue;
+    }
 
     final canFallback = failure['canFallback'] == true;
     final choice = await showDialog<_FaceChoice>(
@@ -71,14 +129,14 @@ Future<bool> submitWithFaceRetry(
       ),
     );
     if (choice == _FaceChoice.fallback) {
-      fallback = true; // kirim ulang foto yang sama dengan penanda lanjut
+      fallback = true; // kirim ulang dengan penanda lanjut (tantangan lama sudah terpakai; server menerima karena sudah 3 gagal)
       continue;
     }
     if (choice == _FaceChoice.retry) {
       if (!context.mounted) return false;
-      final next = await captureAttendancePhoto(context, title: captureTitle);
+      final next = await captureAttendancePhoto(context, title: captureTitle, checkOut: checkOut);
       if (next == null) return false;
-      photo = next;
+      capture = next;
       fallback = false;
       continue;
     }

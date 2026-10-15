@@ -12,6 +12,7 @@ import '../models/user_model.dart' show Site;
 import '../models/shift_model.dart';
 import '../utils/error_handler.dart';
 import 'api_service.dart';
+import 'face_id_service.dart';
 
 class AttendanceService {
   final ApiService _apiService = ApiService();
@@ -518,6 +519,18 @@ class AttendanceService {
     }
   }
 
+  /// Bidang form foto langkah gerakan Face ID (kosong bila tidak ada).
+  Future<Map<String, dynamic>> _liveFields(FaceLiveData? live) async {
+    if (live == null) return const {};
+    return {
+      'liveToken': live.token,
+      'liveKinds': live.kinds.join(','),
+      'livePhotos': [
+        for (final p in live.photos) await MultipartFile.fromFile(p.path, filename: 'langkah.jpg'),
+      ],
+    };
+  }
+
   /// Penolakan Face ID dari server (HTTP 422 dengan `faceId`): {code, canFallback}. Null untuk galat lain.
   Map<String, dynamic>? _faceIdRejection(Response response) {
     final data = response.data;
@@ -537,6 +550,7 @@ class AttendanceService {
     String? checkInReason,
     bool faceFallback = false,
     bool faceOffline = false,
+    FaceLiveData? live,
   }) async {
     debugPrint('[AttendanceService] Starting check-in...');
     debugPrint('[AttendanceService] Shift ID: ${shiftId ?? "null (no shift)"}');
@@ -616,6 +630,7 @@ class AttendanceService {
           'checkInReason': checkInReason.trim(),
         if (faceFallback) 'faceFallback': '1',
         if (faceOffline) 'faceOffline': '1',
+        ...await _liveFields(live),
         if (deviceMeta != null) 'deviceInfo': jsonEncode(deviceMeta),
         if (appMeta != null) 'appInfo': jsonEncode(appMeta),
         if (deviceMeta?['model'] != null)
@@ -700,6 +715,7 @@ class AttendanceService {
     String? earlyCheckoutReason,
     bool faceFallback = false,
     bool faceOffline = false,
+    FaceLiveData? live,
   }) async {
     debugPrint('[AttendanceService] Starting check-out...');
     debugPrint('[AttendanceService] Shift ID: ${shiftId ?? "null (no shift)"}');
@@ -779,6 +795,7 @@ class AttendanceService {
           'earlyCheckoutReason': earlyCheckoutReason.trim(),
         if (faceFallback) 'faceFallback': '1',
         if (faceOffline) 'faceOffline': '1',
+        ...await _liveFields(live),
         if (deviceMeta != null) 'deviceInfo': jsonEncode(deviceMeta),
         if (appMeta != null) 'appInfo': jsonEncode(appMeta),
         if (deviceMeta?['model'] != null)

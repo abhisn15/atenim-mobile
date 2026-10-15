@@ -12,16 +12,32 @@ import 'package:permission_handler/permission_handler.dart';
 /// Mengembalikan [shots] foto (daftar File) atau null bila dibatalkan.
 ///
 /// Pengecekan di HP hanya untuk memandu pengguna; keputusan cocok/tidak cocok tetap di server.
+/// Posisi kepala yang diminta pada satu foto.
+enum FacePose { front, turn, smile, blink }
+
+class FaceShot {
+  final String prompt;
+  final FacePose pose;
+
+  /// Hanya untuk [FacePose.turn]: harus menoleh ke sisi SEBALIKNYA dari tolehan sebelumnya.
+  final bool opposite;
+  const FaceShot(this.prompt, this.pose, {this.opposite = false});
+}
+
 class FaceCaptureScreen extends StatefulWidget {
   final String title;
 
-  /// Teks arahan tiap foto. Jumlahnya menentukan banyaknya foto yang diambil.
-  final List<String> shotPrompts;
+  /// Arahan + pose tiap foto. Jumlahnya menentukan banyaknya foto yang diambil.
+  final List<FaceShot> shots;
+
+  /// Mode cepat (absen harian): lebih sedikit frame stabil sebelum jepret. Pendaftaran memakai mode teliti.
+  final bool fast;
 
   const FaceCaptureScreen({
     super.key,
     required this.title,
-    this.shotPrompts = const ['Lihat lurus ke kamera'],
+    this.shots = const [FaceShot('Lihat lurus ke kamera', FacePose.front)],
+    this.fast = false,
   });
 
   @override
@@ -29,7 +45,6 @@ class FaceCaptureScreen extends StatefulWidget {
 }
 
 class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindingObserver {
-  static const _stableFramesNeeded = 5;
   static const _frameGap = Duration(milliseconds: 180);
   static const _orientations = {
     DeviceOrientation.portraitUp: 0,
@@ -59,7 +74,12 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   String _hint = 'Menyiapkan kamera...';
   bool _good = false;
 
-  int get _total => widget.shotPrompts.length;
+  int get _stableFramesNeeded => widget.fast ? 3 : 5;
+  int get _total => widget.shots.length;
+  bool _blinkClosedSeen = false;
+  FaceShot get _shot => widget.shots[_shots.length.clamp(0, _total - 1)];
+  double? _lastTurnSign; // tanda sudut tolehan pertama, untuk meminta sisi sebaliknya
+  double? _pendingTurnSign;
 
   @override
   void initState() {
@@ -115,7 +135,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
         return;
       }
       _controller = controller;
-      if (mounted) setState(() => _hint = widget.shotPrompts.first);
+      if (mounted) setState(() => _hint = widget.shots.first.prompt);
       await _startStream();
     } catch (e) {
       debugPrint('[FaceCapture] init gagal: $e');
@@ -223,6 +243,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   /// Teks masalah pertama yang ditemukan, atau null bila wajah sudah layak diambil.
   String? _checkFrame(List<Face> faces, double w, double h, double brightness) {
     if (faces.isEmpty) return 'Wajah tidak terdeteksi. Hadapkan wajah ke kamera.';
+    _pendingTurnSign = null;
     if (faces.length > 1) return 'Terdeteksi lebih dari satu wajah. Hanya wajah Anda yang boleh terlihat.';
     if (brightness < 55) return 'Terlalu gelap. Cari tempat yang lebih terang.';
     if (brightness > 205) return 'Terlalu terang atau silau. Geser dari cahaya langsung.';
@@ -231,15 +252,38 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     final ratio = box.width / w;
     if (ratio < 0.33) return 'Wajah terlalu jauh. Dekatkan HP.';
     if (ratio > 0.85) return 'Wajah terlalu dekat. Jauhkan HP sedikit.';
+    final shot = _shot;
+    final turning = shot.pose == FacePose.turn;
     final dx = (box.center.dx - w / 2).abs() / w;
     final dy = (box.center.dy - h / 2).abs() / h;
-    if (dx > 0.15 || dy > 0.17) return 'Posisikan wajah di tengah lingkaran.';
+    if (dx > (turning ? 0.25 : 0.15) || dy > 0.17) return 'Posisikan wajah di tengah lingkaran.';
     final yaw = f.headEulerAngleY ?? 0;
     final roll = f.headEulerAngleZ ?? 0;
-    if (yaw.abs() > 14 || roll.abs() > 14) return 'Hadapkan wajah lurus ke kamera.';
+    if (roll.abs() > (turning ? 22 : 14)) return 'Tegakkan kepala Anda.';
     final left = f.leftEyeOpenProbability;
     final right = f.rightEyeOpenProbability;
+    if (shot.pose == FacePose.blink) {
+      // Kedip = mata terlihat menutup lalu terbuka lagi; foto diambil saat mata sudah terbuka kembali.
+      if (left == null || right == null) return null; // HP tanpa klasifikasi mata: tidak bisa dicek, jangan menahan absen
+      if (left < 0.3 && right < 0.3) _blinkClosedSeen = true;
+      if (!_blinkClosedSeen) return shot.prompt;
+      if (left < 0.6 || right < 0.6) return 'Buka mata kembali.';
+      if (yaw.abs() > 20) return 'Hadapkan wajah lurus ke kamera.';
+      return null;
+    }
     if ((left != null && left < 0.4) || (right != null && right < 0.4)) return 'Buka mata Anda.';
+    if (turning) {
+      if (yaw.abs() < 20) return shot.opposite ? 'Tolehkan kepala pelan-pelan ke sisi sebaliknya.' : shot.prompt;
+      if (yaw.abs() > 42) return 'Jangan terlalu menoleh, cukup sedikit.';
+      if (shot.opposite && _lastTurnSign != null && yaw.sign == _lastTurnSign) return 'Tolehkan ke sisi sebaliknya dari tadi.';
+      _pendingTurnSign = yaw.sign;
+      return null;
+    }
+    if (yaw.abs() > 14) return 'Hadapkan wajah lurus ke kamera.';
+    if (shot.pose == FacePose.smile) {
+      final smile = f.smilingProbability;
+      if (smile != null && smile < 0.55) return 'Senyum tipis ke kamera.';
+    }
     return null;
   }
 
@@ -259,6 +303,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       await _stopStream();
       final file = await c.takePicture();
       _shots.add(File(file.path));
+      if (_pendingTurnSign != null) _lastTurnSign = _pendingTurnSign;
+      _blinkClosedSeen = false;
       HapticFeedback.mediumImpact();
       if (_shots.length >= _total) {
         if (mounted) Navigator.of(context).pop(List<File>.from(_shots));
@@ -268,7 +314,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       await Future<void>.delayed(const Duration(milliseconds: 900));
       if (!mounted || _disposed) return;
       setState(() {
-        _hint = widget.shotPrompts[_shots.length];
+        _hint = widget.shots[_shots.length].prompt;
         _good = false;
       });
       _capturing = false;

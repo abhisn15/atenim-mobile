@@ -46,6 +46,21 @@ class FaceIdState {
   );
 }
 
+/// Tantangan gerak dari server untuk satu absen: langkah dipilih server, token sekali pakai.
+class FaceChallenge {
+  final String token;
+  final List<String> steps; // turn | smile | blink
+  const FaceChallenge(this.token, this.steps);
+}
+
+/// Foto langkah gerakan yang ikut dikirim bersama absen.
+class FaceLiveData {
+  final String token;
+  final List<String> kinds;
+  final List<File> photos;
+  const FaceLiveData({required this.token, required this.kinds, required this.photos});
+}
+
 class FaceEnrollResult {
   final bool ok;
   final String message;
@@ -72,6 +87,24 @@ class FaceIdService {
       }
     } catch (e) {
       debugPrint('[FaceIdService] getState gagal: $e');
+    }
+    return null;
+  }
+
+  /// Null bila site tidak meminta gerakan untuk absen ini, atau gagal dibaca (jangan memblokir absen).
+  Future<FaceChallenge?> getChallenge(String kind) async {
+    try {
+      final res = await _api.get('$_faceIdPath/challenge', queryParameters: {'kind': kind});
+      final body = res.data;
+      if (res.statusCode == 200 && body is Map && body['data'] is Map) {
+        final d = body['data'] as Map;
+        if (d['required'] == true && d['token'] is String && d['steps'] is List) {
+          final steps = (d['steps'] as List).map((e) => '$e').toList();
+          if (steps.isNotEmpty) return FaceChallenge(d['token'] as String, steps);
+        }
+      }
+    } catch (e) {
+      debugPrint('[FaceIdService] getChallenge gagal: $e');
     }
     return null;
   }

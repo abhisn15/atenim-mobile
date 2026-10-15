@@ -2551,10 +2551,12 @@ class _HomeTabState extends State<HomeTab>
 
       debugPrint('[HomeTab] Opening camera for check-in selfie...');
 
-      final photo = await captureAttendancePhoto(
+      final capture = await captureAttendancePhoto(
         context,
         title: 'Ambil Selfie untuk Check-In',
+        checkOut: false,
       );
+      final photo = capture?.photo;
 
       if (photo != null && mounted) {
         debugPrint('[HomeTab] Photo captured: ${photo.path}');
@@ -2569,9 +2571,11 @@ class _HomeTabState extends State<HomeTab>
             context,
             provider: attendanceProvider,
             captureTitle: 'Ambil Selfie untuk Check-In',
-            firstPhoto: photo,
-            submit: (p, faceFallback) => attendanceProvider.checkIn(
-              photo: p,
+            checkOut: false,
+            first: capture!,
+            submit: (c, faceFallback) => attendanceProvider.checkIn(
+              photo: c.photo,
+              live: c.live,
               shiftId: selectedShift?.id,
               checkInReason: checkInReason,
               latitude: gpsCoordinates?['lat'],
@@ -2704,10 +2708,12 @@ class _HomeTabState extends State<HomeTab>
       final wasTracking = await attendanceProvider.pauseRealtimeTracking();
 
       // Buka kamera untuk selfie (hanya kamera, tidak boleh galeri)
-      final photo = await captureAttendancePhoto(
+      final capture = await captureAttendancePhoto(
         context,
         title: 'Ambil Selfie untuk Check-Out',
+        checkOut: true,
       );
+      final photo = capture?.photo;
 
       if (photo != null && mounted) {
         debugPrint('[HomeTab] Photo captured: ${photo.path}');
@@ -2723,9 +2729,11 @@ class _HomeTabState extends State<HomeTab>
             context,
             provider: attendanceProvider,
             captureTitle: 'Ambil Selfie untuk Check-Out',
-            firstPhoto: photo,
-            submit: (p, faceFallback) => attendanceProvider.checkOut(
-              photo: p,
+            checkOut: true,
+            first: capture!,
+            submit: (c, faceFallback) => attendanceProvider.checkOut(
+              photo: c.photo,
+              live: c.live,
               shiftId: today?.shiftId,
               earlyCheckoutReason: earlyCheckoutReason,
               latitude: gpsCoordinates?['lat'],

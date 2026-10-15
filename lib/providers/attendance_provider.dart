@@ -3,6 +3,7 @@ import 'dart:io';
 import '../models/attendance_model.dart';
 import '../models/user_model.dart' show User;
 import '../services/attendance_service.dart';
+import '../services/face_id_service.dart';
 import '../services/realtime_location_service.dart';
 import '../services/offline_storage_service.dart';
 import '../services/background_tracking_service.dart';
@@ -668,6 +669,7 @@ class AttendanceProvider with ChangeNotifier {
     double? longitude,
     String? checkInReason,
     bool faceFallback = false,
+    FaceLiveData? live,
   }) async {
     // Prevent double check-in calls
     if (_checkInInProgress) {
@@ -721,6 +723,7 @@ class AttendanceProvider with ChangeNotifier {
             site: sessionUser?.site,
             checkInReason: checkInReason,
             faceFallback: faceFallback,
+            live: live,
           );
 
           if (result['success'] == true) {
@@ -1090,6 +1093,7 @@ class AttendanceProvider with ChangeNotifier {
     double? longitude,
     String? earlyCheckoutReason,
     bool faceFallback = false,
+    FaceLiveData? live,
   }) async {
     // Prevent double check-out calls
     if (_checkOutInProgress) {
@@ -1141,6 +1145,7 @@ class AttendanceProvider with ChangeNotifier {
             site: sessionUser?.site,
             earlyCheckoutReason: earlyCheckoutReason,
             faceFallback: faceFallback,
+            live: live,
           );
 
           if (result['success'] == true) {

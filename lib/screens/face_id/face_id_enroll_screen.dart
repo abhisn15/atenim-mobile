@@ -17,10 +17,14 @@ class FaceIdEnrollScreen extends StatefulWidget {
 }
 
 class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
-  static const _prompts = [
-    'Lihat lurus ke kamera',
-    'Senyum tipis, tetap lihat lurus',
-    'Sekali lagi, lihat lurus ke kamera',
+  // Urutan pose: server memeriksa sendiri sudut kepala dari fotonya (butuh lurus + menoleh ke dua sisi).
+  static const _shots = [
+    FaceShot('Lihat lurus ke kamera', FacePose.front),
+    FaceShot('Tolehkan kepala pelan-pelan ke satu sisi', FacePose.turn),
+    FaceShot('Kembali lurus ke kamera', FacePose.front),
+    FaceShot('Sekarang tolehkan ke sisi sebaliknya', FacePose.turn, opposite: true),
+    FaceShot('Senyum tipis, lihat lurus ke kamera', FacePose.smile),
+    FaceShot('Kedipkan mata Anda sekali', FacePose.blink),
   ];
 
   final _service = FaceIdService();
@@ -31,7 +35,7 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
   Future<void> _start() async {
     final photos = await Navigator.of(context).push<List<File>>(
       MaterialPageRoute(
-        builder: (_) => const FaceCaptureScreen(title: 'Daftarkan wajah', shotPrompts: _prompts),
+        builder: (_) => const FaceCaptureScreen(title: 'Daftarkan wajah', shots: _shots),
       ),
     );
     if (photos == null || !mounted) return;
@@ -93,7 +97,7 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
             Text('Absen dengan wajah', style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
-              'Lokasi kerja Anda memakai Face ID agar check-in dan check-out dipastikan dilakukan oleh Anda sendiri. Daftarkan wajah satu kali; ambil 3 foto singkat.',
+              'Lokasi kerja Anda memakai Face ID agar check-in dan check-out dipastikan dilakukan oleh Anda sendiri. Daftarkan wajah satu kali: ambil 6 foto singkat (lurus, menoleh ke kedua sisi, senyum, dan kedip).',
               style: theme.textTheme.bodyMedium,
             ),
             const SizedBox(height: 16),
