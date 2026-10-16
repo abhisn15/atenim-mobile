@@ -1529,8 +1529,10 @@ class AttendanceProvider with ChangeNotifier {
         synced = true;
       } else {
         final message = (result['message'] ?? '').toString().toLowerCase();
-        if (message.contains('sudah check-in') || message.contains('already')) {
+        // Ditolak karena Face ID (mis. Mode Wajib): mengulang tidak akan membantu, buang dari antrean.
+        if (message.contains('sudah check-in') || message.contains('already') || result['faceId'] is Map) {
           await _offlineStorage.removePendingCheckIn(i);
+          if (result['faceId'] is Map) _error = 'Absen offline ditolak: ${result['message']}';
         }
       }
     }
@@ -1598,8 +1600,10 @@ class AttendanceProvider with ChangeNotifier {
       } else {
         final message = (result['message'] ?? '').toString().toLowerCase();
         if (message.contains('sudah check-out') ||
-            message.contains('already')) {
+            message.contains('already') ||
+            result['faceId'] is Map) {
           await _offlineStorage.removePendingCheckOut(i);
+          if (result['faceId'] is Map) _error = 'Absen offline ditolak: ${result['message']}';
         }
       }
     }

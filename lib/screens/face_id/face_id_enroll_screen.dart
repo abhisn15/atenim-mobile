@@ -53,7 +53,7 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
     }
     if (!mounted) return;
     if (result.ok) {
-      ToastHelper.showSuccess(context, 'Face ID terkirim. Menunggu persetujuan admin.');
+      ToastHelper.showSuccess(context, result.message.isNotEmpty ? result.message : 'Face ID terdaftar.');
       Navigator.of(context).pop(true);
       return;
     }
@@ -116,6 +116,28 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
                   ],
                 ),
               ),
+            if (widget.state.enforce)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.verified_user_outlined, color: theme.colorScheme.onPrimaryContainer),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Face ID wajib di lokasi kerja Anda. Tanpa Face ID, absen tidak bisa dilakukan.',
+                        style: TextStyle(color: theme.colorScheme.onPrimaryContainer, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 4),
             CheckboxListTile(
               value: _agreed,
@@ -138,7 +160,9 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
               label: Text(_busy ? 'Mengirim...' : 'Daftarkan wajah saya'),
             ),
             const SizedBox(height: 8),
-            OutlinedButton(onPressed: _busy ? null : _decline, child: const Text('Saya tidak mau memakai Face ID')),
+            // Di site ber-Mode Wajib Face ID adalah aturan perusahaan: tidak ada pilihan menolak.
+            if (!widget.state.enforce)
+              OutlinedButton(onPressed: _busy ? null : _decline, child: const Text('Saya tidak mau memakai Face ID')),
             TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Nanti saja')),
           ],
         ),

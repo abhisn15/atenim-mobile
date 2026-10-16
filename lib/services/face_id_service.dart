@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_service.dart';
 
 const _faceIdPath = '/api/ess/face-id';
+const _kEnforceCache = 'face_id_enforce_cached';
 
 /// Status Face ID karyawan dari server (sumber tunggal, termasuk teks persetujuan).
 class FaceIdState {
@@ -83,7 +86,10 @@ class FaceIdService {
       final res = await _api.get(_faceIdPath);
       final body = res.data;
       if (res.statusCode == 200 && body is Map && body['data'] is Map) {
-        return FaceIdState.fromJson(Map<String, dynamic>.from(body['data'] as Map));
+        final state = FaceIdState.fromJson(Map<String, dynamic>.from(body['data'] as Map));
+        // Diingat untuk penjagaan offline: di site ber-Mode Wajib, absen butuh internet.
+        unawaited(_rememberEnforce(state.enabled && state.enforce));
+        return state;
       }
     } catch (e) {
       debugPrint('[FaceIdService] getState gagal: $e');
@@ -107,6 +113,21 @@ class FaceIdService {
       debugPrint('[FaceIdService] getChallenge gagal: $e');
     }
     return null;
+  }
+
+  Future<void> _rememberEnforce(bool value) async {
+    try {
+      (await SharedPreferences.getInstance()).setBool(_kEnforceCache, value);
+    } catch (_) {}
+  }
+
+  /// Status Mode Wajib terakhir yang diketahui (untuk saat status tidak bisa dimuat karena offline).
+  Future<bool> cachedEnforce() async {
+    try {
+      return (await SharedPreferences.getInstance()).getBool(_kEnforceCache) ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<FaceEnrollResult> enroll({

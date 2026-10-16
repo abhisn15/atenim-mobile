@@ -52,6 +52,22 @@ Future<AttendanceCapture?> captureAttendancePhoto(
   } catch (_) {}
   if (!context.mounted) return null;
 
+  // Status tidak bisa dimuat (offline/server tak terjangkau) di site yang Face ID-nya WAJIB: absen butuh internet, jadi jangan
+  // biarkan karyawan mengambil foto biasa yang nanti pasti ditolak.
+  if (state == null && await service.cachedEnforce()) {
+    if (!context.mounted) return null;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.wifi_off_rounded),
+        title: const Text('Face ID wajib, butuh internet'),
+        content: const Text('Absen di lokasi kerja Anda wajib memakai Face ID dan harus terhubung ke internet. Sambungkan internet lalu coba lagi.'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Mengerti'))],
+      ),
+    );
+    return null;
+  }
+
   if (state != null && state.usesFaceCapture) {
     final steps = challenge?.steps ?? const <String>[];
     final shots = [
@@ -138,7 +154,7 @@ Future<bool> submitWithFaceRetry(
         title: const Text('Wajah belum terverifikasi'),
         content: Text(
           '${provider.error ?? 'Wajah Anda belum bisa diverifikasi.'}\n\n'
-          '${canFallback ? 'Anda sudah mencoba beberapa kali. Anda boleh lanjut tanpa verifikasi; absen akan ditandai dan ditinjau admin.' : 'Coba lagi dengan pencahayaan yang cukup dan wajah menghadap lurus ke kamera.'}',
+          '${canFallback ? 'Anda sudah mencoba beberapa kali. Anda boleh lanjut tanpa verifikasi; absen akan ditandai dan ditinjau admin.' : 'Coba lagi dengan pencahayaan yang cukup dan wajah menghadap lurus ke kamera. Bila terus gagal, hubungi admin atau atasan Anda untuk koreksi absen.'}',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, _FaceChoice.cancel), child: const Text('Batal')),
