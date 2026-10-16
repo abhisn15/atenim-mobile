@@ -51,6 +51,12 @@ class ApiService {
             final deviceId = await DeviceIdService.getOrCreateDeviceId();
             options.headers['x-device-id'] = deviceId;
           }
+          // Nama HP & sistem ikut di setiap permintaan supaya jejak perangkat Face ID (pendaftaran/absen) terisi di server.
+          if (options.headers['x-device-name'] == null) {
+            final info = await DeviceIdService.getNameAndPlatform();
+            options.headers['x-device-name'] = info['name'];
+            options.headers['x-device-platform'] = info['platform'];
+          }
 
           handler.next(options);
         },
