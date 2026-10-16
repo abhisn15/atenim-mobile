@@ -92,8 +92,11 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Face ID absensi')),
+    // Mode Wajib: tidak ada jalan keluar tanpa mendaftar (tombol kembali dimatikan).
+    return PopScope(
+      canPop: !widget.state.enforce,
+      child: Scaffold(
+      appBar: AppBar(title: const Text('Face ID absensi'), automaticallyImplyLeading: !widget.state.enforce),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
@@ -163,9 +166,9 @@ class _FaceIdEnrollScreenState extends State<FaceIdEnrollScreen> {
             // Di site ber-Mode Wajib Face ID adalah aturan perusahaan: tidak ada pilihan menolak.
             if (!widget.state.enforce)
               OutlinedButton(onPressed: _busy ? null : _decline, child: const Text('Saya tidak mau memakai Face ID')),
-            TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(false), child: const Text('Nanti saja')),
           ],
         ),
+      ),
       ),
     );
   }

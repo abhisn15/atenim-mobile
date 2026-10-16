@@ -68,6 +68,17 @@ Future<AttendanceCapture?> captureAttendancePhoto(
     return null;
   }
 
+  // Face ID wajib tetapi belum terdaftar (belum pernah, atau pendaftaran ditolak sistem): wajib daftar dulu, TIDAK boleh jatuh
+  // ke kamera biasa. Tanpa pendaftaran yang berhasil, absen dibatalkan.
+  if (state != null && state.enabled && state.enforce && state.needsEnrollment) {
+    final done = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => FaceIdEnrollScreen(state: state!)),
+    );
+    if (done != true || !context.mounted) return null;
+    state = await service.getState();
+    if (state == null || !state.usesFaceCapture || !context.mounted) return null;
+  }
+
   if (state != null && state.usesFaceCapture) {
     final steps = challenge?.steps ?? const <String>[];
     final shots = [
